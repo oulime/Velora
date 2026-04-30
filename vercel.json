@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/proxy", "destination": "/api/proxy" }
+  ],
+  "functions": {
+    "api/proxy.ts": {
+      "maxDuration": 60
+    }
+  }
+}
