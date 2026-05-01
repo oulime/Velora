@@ -241,6 +241,15 @@ function displayChannelName(raw: string): string {
   return s.length ? s : raw.trim();
 }
 
+/** Hide noisy placeholder channels like "##### FR DAZN PPV #####". */
+function isHiddenDecorativeChannel(rawName: string): boolean {
+  const n = rawName.trim();
+  if (!n) return true;
+  if (/#{4,}/.test(n)) return true;
+  if (/^[#\-\s_]+$/.test(n)) return true;
+  return false;
+}
+
 function setLoginStatus(msg: string, isError = false): void {
   elLoginStatus.textContent = msg;
   elLoginStatus.classList.toggle("error", isError);
@@ -885,7 +894,9 @@ function renderCategoryPills(): void {
 function renderStreams(pillId: PillId, filter: string): void {
   elStreamList.innerHTML = "";
   if (!state) return;
-  const streams = streamsForPill(state.streamsByCat, state.categories, pillId);
+  const streams = streamsForPill(state.streamsByCat, state.categories, pillId).filter(
+    (s) => !isHiddenDecorativeChannel(s.name)
+  );
   const q = filter.trim().toLowerCase();
   const filtered = q
     ? streams.filter((s) => {
@@ -948,29 +959,7 @@ function renderStreams(pillId: PillId, filter: string): void {
       activeStreamId = s.stream_id;
       elStreamList.querySelectorAll("button.channel-card").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      if (state!.mode === "nodecast") {
-        elNowPlaying.textContent = "Resolving stream URL...";
-        void (async () => {
-          const resolved = await resolveNodecastStreamUrl(
-            state!.base,
-            s,
-            state!.nodecastAuthHeaders
-          );
-          if (!resolved) {
-            elNowPlaying.innerHTML = '<span class="error">Could not resolve this channel stream URL from Nodecast API.</span>';
-            return;
-          }
-          if (!sameOrigin(resolved, state!.base)) {
-            elNowPlaying.innerHTML = '<span class="error">Blocked non-Nodecast playback URL; proxy stream endpoint required.</span>';
-            return;
-          }
-          s.direct_source = resolved;
-          playUrl(resolved, displayChannelName(s.name));
-        })();
-        return;
-      }
-      const m3u8 = buildLiveStreamUrl(state!.serverInfo, state!.username, state!.password, s.stream_id, "m3u8");
-      playUrl(m3u8, displayChannelName(s.name));
+      void playStreamByMode(s);
     });
     li.appendChild(btn);
     elStreamList.appendChild(li);
@@ -985,6 +974,45 @@ function renderStreams(pillId: PillId, filter: string): void {
     li.appendChild(empty);
     elStreamList.appendChild(li);
   }
+}
+
+async function playStreamByMode(s: LiveStream): Promise<void> {
+  if (!state) return;
+  if (state.mode === "nodecast") {
+    elNowPlaying.textContent = "Resolving stream URL...";
+    const resolved = await resolveNodecastStreamUrl(
+      state.base,
+      s,
+      state.nodecastAuthHeaders
+    );
+    if (!resolved) {
+      elNowPlaying.innerHTML = '<span class="error">Could not resolve this channel stream URL from Nodecast API.</span>';
+      return;
+    }
+    if (!sameOrigin(resolved, state.base)) {
+      elNowPlaying.innerHTML = '<span class="error">Blocked non-Nodecast playback URL; proxy stream endpoint required.</span>';
+      return;
+    }
+    s.direct_source = resolved;
+    playUrl(resolved, displayChannelName(s.name));
+    return;
+  }
+  const m3u8 = buildLiveStreamUrl(
+    state.serverInfo,
+    state.username,
+    state.password,
+    s.stream_id,
+    "m3u8"
+  );
+  playUrl(m3u8, displayChannelName(s.name));
+}
+
+function firstVisibleStream(): LiveStream | null {
+  if (!state) return null;
+  const streams = streamsForPill(state.streamsByCat, state.categories, selectedPillId).filter(
+    (s) => !isHiddenDecorativeChannel(s.name)
+  );
+  return streams[0] ?? null;
 }
 
 async function connect(): Promise<void> {
@@ -1031,6 +1059,12 @@ async function connect(): Promise<void> {
     selectedPillId = "all";
     elStreamFilter.value = "";
     renderCategoryPills();
+    const first = firstVisibleStream();
+    if (first) {
+      activeStreamId = first.stream_id;
+      renderStreams(selectedPillId, elStreamFilter.value);
+      void playStreamByMode(first);
+    }
 
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");

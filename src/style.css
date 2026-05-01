@@ -837,54 +837,45 @@ button.primary:hover {
   }
 
   .sidebar-nav {
-    width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    border-right: none;
-    border-bottom: 1px solid var(--border-soft);
-    padding: 0.5rem;
-  }
-
-  .sidebar-nav__list {
-    flex-direction: row;
-    flex-wrap: wrap;
-    overflow-x: auto;
-    flex: 1;
-  }
-
-  .sidebar-nav__item span:not(.sidebar-nav__ico) {
     display: none;
   }
 
-  .sidebar-nav__item {
-    width: auto;
-    border-left: none;
-    border-bottom: 2px solid transparent;
-  }
-
-  .sidebar-nav__item--active {
-    border-left: none;
-    border-bottom-color: var(--accent);
-  }
-
-  .sidebar-premium {
-    display: none;
+  .layout-main {
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .hero-row {
     flex-direction: column;
-    overflow-y: auto;
+    flex: 0 0 auto;
+    overflow: visible;
   }
 
   .player-col {
+    flex: 0 0 auto;
     border-right: none;
     border-bottom: 1px solid var(--border-soft);
   }
 
   .channel-drawer {
+    order: -1;
     width: 100%;
-    max-height: min(38vh, 320px);
+    min-height: 44dvh;
+    max-height: 52dvh;
     border-left: none;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .live-now-strip,
+  .program-guide {
+    display: none;
+  }
+
+  .cat-pills-wrap {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 2;
   }
 }
 
@@ -900,6 +891,43 @@ button.primary:hover {
 
   .topbar__search-wrap {
     max-width: none;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+
+  .topbar__brand {
+    order: 1;
+  }
+
+  .topbar__actions {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .topbar__search-wrap {
+    order: 3;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .channel-drawer {
+    min-height: 48dvh;
+    max-height: 56dvh;
+  }
+
+  .stream-list {
+    padding: 0.4rem;
+  }
+
+  .player-col {
+    padding: 0.55rem;
+  }
+
+  .player-frame {
+    max-height: min(46dvh, 300px);
   }
 }
 
