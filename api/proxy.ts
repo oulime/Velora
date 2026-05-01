@@ -9,6 +9,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
+
 export const config = {
   api: {
     bodyParser: false,
@@ -165,7 +167,7 @@ function rewriteM3u8(body: string, playlistUrl: string): string {
     const p = new URLSearchParams();
     p.set("target", absolute);
     p.set("from", playlistUrl);
-    return `/proxy?${p.toString()}`;
+    return `${PROXY_PREFIX}?${p.toString()}`;
   };
   return body
     .split("\n")

@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:namecheap": "cross-env VITE_PROXY_PREFIX=/proxy.php tsc && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@vercel/node": "^5.0.0",
     "typescript": "~5.6.3",
     "vite": "^6.0.1"

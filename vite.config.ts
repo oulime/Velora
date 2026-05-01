@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vite";
 
+/** Match `VITE_PROXY_PREFIX` in `src/main.ts` (e.g. `/proxy.php` on Namecheap). */
+const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
+
 /** Per dev-server process: cookies + last HLS manifest per token dir (nginx session / Referer). */
 const upstreamSession = {
   /** host → cookie name → value */
@@ -67,7 +70,7 @@ function rewriteM3u8(body: string, playlistUrl: string): string {
     const p = new URLSearchParams();
     p.set("target", absolute);
     p.set("from", playlistUrl);
-    return `/proxy?${p.toString()}`;
+    return `${PROXY_PREFIX}?${p.toString()}`;
   };
 
   return body
@@ -260,7 +263,7 @@ function buildUpstreamHeaders(
 
 function proxyMiddleware() {
   return async (req: IncomingMessage, res: ServerResponse, next: Next) => {
-    if (!req.url?.startsWith("/proxy?")) {
+    if (!req.url?.startsWith(`${PROXY_PREFIX}?`)) {
       next();
       return;
     }

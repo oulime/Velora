@@ -1,0 +1,8 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Let PHP see Authorization header (many shared hosts strip it otherwise)
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+  # Optional: keep default app path /proxy without rebuilding (maps to proxy.php)
+  RewriteRule ^proxy$ proxy.php [L,QSA]
+</IfModule>

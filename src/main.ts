@@ -43,6 +43,9 @@ type ProxiedRequestInit = {
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel);
 
+/** Production shared hosting: set `VITE_PROXY_PREFIX=/proxy.php` at build time, or use /.htaccess rewrite `^proxy$` → `proxy.php`. */
+const PROXY_PREFIX = (import.meta.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
+
 const elServer = $("#server") as HTMLInputElement;
 const elUser = $("#user") as HTMLInputElement;
 const elPass = $("#pass") as HTMLInputElement;
@@ -93,7 +96,7 @@ function proxiedUrl(target: string, fromPlaylist?: string): string {
   const p = new URLSearchParams();
   p.set("target", target);
   p.set("from", fromPlaylist ?? target);
-  return `/proxy?${p.toString()}`;
+  return `${PROXY_PREFIX}?${p.toString()}`;
 }
 
 function resolvedIconUrl(raw: string | undefined, base: string): string | null {
@@ -1056,71 +1059,19 @@ async function connect(): Promise<void> {
   }
 
   elBtnConnect.disabled = true;
-  setLoginStatus("Checking credentials…");
+  setLoginStatus("Connecting to Nodecast…");
 
   try {
-    let mode: "xtream" | "nodecast" = "xtream";
-    let serverInfo: ServerInfo | null = null;
-    let cats: LiveCategory[] = [];
-    let streamsByCat = new Map<string, LiveStream[]>();
-    let nodecastAuthHeaders: Record<string, string> | undefined;
-
-    try {
-      const authUrl = buildPlayerApiUrl(base, username, password);
-      const auth = await fetchProxiedJson<PlayerApiResponse>(authUrl);
-      if (!auth.user_info || auth.user_info.auth === 0 || !auth.server_info) {
-        throw new Error(auth.user_info?.message || "Xtream auth failed.");
-      }
-      serverInfo = auth.server_info;
-
-      setLoginStatus("Loading categories…");
-      const catUrl = buildPlayerApiUrl(base, username, password, {
-        action: "get_live_categories",
-      });
-      const xtreamCats = await fetchProxiedJson<LiveCategory[]>(catUrl);
-      if (!Array.isArray(xtreamCats)) {
-        throw new Error("Unexpected categories response.");
-      }
-      cats = xtreamCats.filter(categoryNameIncludesFrance);
-
-      setLoginStatus("Loading channels…");
-      const allUrl = buildPlayerApiUrl(base, username, password, {
-        action: "get_live_streams",
-      });
-      const allStreams = await fetchProxiedJson<LiveStream[]>(allUrl);
-      if (!Array.isArray(allStreams)) {
-        throw new Error("Unexpected streams response.");
-      }
-
-      streamsByCat = groupStreamsByCategory(allStreams);
-      const groupedTotal = [...streamsByCat.values()].reduce((n, a) => n + a.length, 0);
-      const needsPerCategory = cats.length > 0 && (allStreams.length === 0 || groupedTotal === 0);
-      if (needsPerCategory) {
-        setLoginStatus("Loading channels (per category)…");
-        streamsByCat = await fetchStreamsPerCategory(base, username, password, cats, (done, total) => {
-          setLoginStatus(`Loading channels… ${done}/${total} categories`);
-        });
-      } else {
-        for (const c of cats) {
-          const id = String(c.category_id);
-          if (!streamsByCat.has(id)) {
-            streamsByCat.set(id, []);
-          }
-        }
-      }
-    } catch {
-      mode = "nodecast";
-      setLoginStatus("Xtream login failed; trying Nodecast…");
-      const nodecast = await tryNodecastLoginAndLoad(base, username, password);
-      cats = nodecast.categories;
-      streamsByCat = nodecast.streamsByCat;
-      nodecastAuthHeaders = nodecast.authHeaders;
-      serverInfo = {
-        url: new URL(base).hostname,
-        port: new URL(base).port || (new URL(base).protocol === "https:" ? "443" : "80"),
-        server_protocol: new URL(base).protocol.replace(":", ""),
-      };
-    }
+    const mode: "nodecast" = "nodecast";
+    const nodecast = await tryNodecastLoginAndLoad(base, username, password);
+    let cats: LiveCategory[] = nodecast.categories;
+    let streamsByCat = nodecast.streamsByCat;
+    const nodecastAuthHeaders = nodecast.authHeaders;
+    const serverInfo: ServerInfo = {
+      url: new URL(base).hostname,
+      port: new URL(base).port || (new URL(base).protocol === "https:" ? "443" : "80"),
+      server_protocol: new URL(base).protocol.replace(":", ""),
+    };
 
     const france = filterCategoriesAndStreamsToFrance(cats, streamsByCat);
     cats = france.categories;
