@@ -154,8 +154,11 @@ function buildUpstreamHeaders(
   if (!targetUnderHls || /\.m3u8$/i.test(targetPath) || targetIsTsUnderHls) {
     h.Origin = origin;
   }
+  const isLikelyMediaSegment =
+    /\.(ts|m4s|mp4|m4v|aac|mp3|webm|mkv)(?:$|\?)/i.test(targetPath) ||
+    /\/segment\//i.test(targetPath);
   const range = getHeader(req, "range");
-  if (range && !targetIsTsUnderHls) h.Range = range;
+  if (range && isLikelyMediaSegment && !/\.m3u8(?:$|\?)/i.test(targetPath)) h.Range = range;
   const authorization = getHeader(req, "authorization");
   if (authorization?.trim()) h.Authorization = authorization;
   return h;
@@ -222,6 +225,10 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "content-encoding",
   "set-cookie",
+  "etag",
+  "cache-control",
+  "expires",
+  "last-modified",
 ]);
 
 function copyUpstreamHeadersToRes(upstream: Response, res: VercelResponse): void {
@@ -234,6 +241,12 @@ function copyUpstreamHeadersToRes(upstream: Response, res: VercelResponse): void
       /* ignore invalid header names */
     }
   });
+}
+
+function setNoStoreHeaders(res: VercelResponse): void {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
 }
 
 function isAllowedTarget(target: string): boolean {
@@ -336,6 +349,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       const rewritten = rewriteM3u8(text, target);
       res.status(200);
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      setNoStoreHeaders(res);
       res.send(Buffer.from(rewritten, "utf8"));
       return;
     }
@@ -349,6 +363,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       !upstream.body
     ) {
       copyUpstreamHeadersToRes(upstream, res);
+      setNoStoreHeaders(res);
       res.end();
       return;
     }
@@ -362,6 +377,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     });
 
     copyUpstreamHeadersToRes(upstream, res);
+    setNoStoreHeaders(res);
 
     const webBody = upstream.body as import("stream/web").ReadableStream<Uint8Array>;
     const nodeReadable = Readable.fromWeb(webBody);
