@@ -264,10 +264,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   if (!isAllowedTarget(target)) {
+    let blockedHost = "(invalid)";
+    try {
+      const u = new URL(target);
+      blockedHost = u.port ? `${u.hostname}:${u.port}` : u.hostname;
+    } catch {
+      // keep fallback
+    }
+    const allowedRaw = process.env.PROXY_ALLOWED_HOSTS?.trim();
+    const allowedList = allowedRaw
+      ? allowedRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const requestId = getHeader(req, "x-vercel-id") ?? "unknown";
+    console.warn("[proxy] blocked target host", {
+      requestId,
+      blockedHost,
+      target,
+      allowedHosts: allowedList,
+    });
     res
       .status(403)
       .send(
-        "Proxy target host not allowed. Set PROXY_ALLOWED_HOSTS on Vercel (comma-separated host or host:port)."
+        `Proxy target host not allowed. blockedHost=${blockedHost}; allowedHosts=${
+          allowedList.length ? allowedList.join(",") : "(none configured)"
+        }. Set PROXY_ALLOWED_HOSTS on Vercel (comma-separated host or host:port).`
       );
     return;
   }
