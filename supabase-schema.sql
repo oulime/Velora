@@ -79,9 +79,9 @@ alter table public.admin_packages add column if not exists theme_glow text;
 alter table public.admin_packages add column if not exists theme_back text;
 alter table public.admin_packages add column if not exists cover_url text;
 
--- Image des bouquets Supabase : URL publique (Storage ou externe).
--- Storage : créer un bucket public « package-covers » (Dashboard → Storage), puis des politiques
--- lecture/écriture pour rôle `anon` si vous utilisez la clé publishable côté lecteur.
+-- Image des bouquets : URL publique (externe, Supabase Storage, ou Cloudflare R2 via Worker).
+-- Storage Supabase : bucket public « package-covers » (Dashboard → Storage) + politiques anon.
+-- Cloudflare : voir cloudflare-workers/package-cover-r2/README.md (fichiers sur R2, URL enregistrée ici).
 
 -- Liste des pays reconnus pour le menu (clé = préfixe normalisé du nom de catégorie IPTV).
 -- Si la table est vide, le lecteur utilise la liste intégrée (fallback).
@@ -137,3 +137,18 @@ drop policy if exists "open read/write admin_stream_curations" on public.admin_s
 
 create policy "open read/write admin_stream_curations"
 on public.admin_stream_curations for all to anon, authenticated using (true) with check (true);
+
+-- Images de bouquets hors `admin_packages` (catégories fournisseur, ex. velagg:fr:bein) ou surcharges explicites.
+create table if not exists public.admin_package_covers (
+  package_id text primary key,
+  cover_url text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.admin_package_covers enable row level security;
+
+drop policy if exists "open read/write admin_package_covers" on public.admin_package_covers;
+
+create policy "open read/write admin_package_covers"
+on public.admin_package_covers for all to anon, authenticated using (true) with check (true);

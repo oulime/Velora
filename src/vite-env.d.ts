@@ -10,6 +10,10 @@ interface ImportMetaEnv {
   readonly VITE_NODECAST_PASSWORD?: string;
   readonly NEXT_PUBLIC_SUPABASE_URL?: string;
   readonly NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?: string;
+  /** When set, package cover file uploads go to this URL (Cloudflare Worker → R2). See cloudflare-workers/package-cover-r2/README.md */
+  readonly VITE_CLOUDFLARE_COVER_UPLOAD_URL?: string;
+  /** Bearer token for the Worker; must match Worker secret UPLOAD_SECRET. */
+  readonly VITE_CLOUDFLARE_COVER_UPLOAD_SECRET?: string;
 }
 
 interface ImportMeta {

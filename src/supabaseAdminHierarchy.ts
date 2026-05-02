@@ -32,6 +32,45 @@ export const PACKAGE_COVERS_BUCKET = "package-covers";
 
 const MAX_COVER_BYTES = 2 * 1024 * 1024;
 
+/** Safe folder name under Storage (provider ids, `velagg:…`, UUIDs). */
+export function sanitizePackageCoverStoragePrefix(packageId: string): string {
+  const t = packageId.trim().replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/_+/g, "_");
+  return t.length ? t.slice(0, 120) : "pkg";
+}
+
+async function uploadPackageCoverToCloudflare(
+  packageId: string,
+  file: File
+): Promise<{ url: string } | { error: string } | null> {
+  const endpoint = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_URL as string | undefined)?.trim();
+  if (!endpoint) return null;
+  const secret = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET as string | undefined)?.trim();
+  const fd = new FormData();
+  fd.set("file", file);
+  fd.set("packageId", packageId);
+  const headers: HeadersInit = {};
+  if (secret) headers.Authorization = `Bearer ${secret}`;
+  let res: Response;
+  try {
+    res = await fetch(endpoint, { method: "POST", body: fd, headers });
+  } catch {
+    return { error: "Réseau indisponible (upload Cloudflare)." };
+  }
+  const text = await res.text();
+  let parsed: { url?: string; error?: string };
+  try {
+    parsed = (text ? JSON.parse(text) : {}) as { url?: string; error?: string };
+  } catch {
+    return { error: res.ok ? "Réponse serveur invalide." : text || `HTTP ${res.status}` };
+  }
+  if (!res.ok) {
+    return { error: parsed.error || text || `Échec upload (${res.status}).` };
+  }
+  const url = parsed.url?.trim();
+  if (!url) return { error: parsed.error || "URL manquante dans la réponse." };
+  return { url };
+}
+
 /** Upload a cover file; returns public URL or an error message. */
 export async function uploadPackageCoverFile(
   sb: SupabaseClient,
@@ -41,9 +80,13 @@ export async function uploadPackageCoverFile(
   if (file.size > MAX_COVER_BYTES) {
     return { error: "Image trop volumineuse (max 2 Mo)." };
   }
+  const cf = await uploadPackageCoverToCloudflare(packageId, file);
+  if (cf) return cf;
+
   const rawExt = (file.name.split(".").pop() || "jpg").toLowerCase();
   const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "jpg";
-  const path = `${packageId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+  const folder = sanitizePackageCoverStoragePrefix(packageId);
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
   const { error } = await sb.storage.from(PACKAGE_COVERS_BUCKET).upload(path, file, {
     cacheControl: "3600",
     upsert: false,

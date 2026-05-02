@@ -1,0 +1,16 @@
+name = "lumina-package-cover-upload"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+account_id = "595bb959cab77b78966a56f9bfe5a5bd"
+
+# Create bucket in Cloudflare Dashboard → R2, then set bucket_name here.
+[[r2_buckets]]
+binding = "COVER_BUCKET"
+bucket_name = "lumina-package-covers"
+
+# Public URL prefix for GET (R2 public access, custom domain, or public bucket URL). No trailing slash.
+[vars]
+PUBLIC_BASE_URL = "https://REPLACE_ME.r2.dev"
+
+# Set with: npx wrangler secret put UPLOAD_SECRET
+# Must match VITE_CLOUDFLARE_COVER_UPLOAD_SECRET in the app .env when building.

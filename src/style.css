@@ -1752,6 +1752,7 @@ a.topbar__admin-link {
 }
 
 .vel-package-card {
+  position: relative;
   background-color: var(--vel-surface);
   aspect-ratio: 1;
   border-radius: 18px;
@@ -1820,6 +1821,50 @@ a.topbar__admin-link {
 
 #content-view.hidden {
   display: none !important;
+}
+
+.vel-content-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.vel-content-toolbar .back-btn {
+  margin: 0;
+}
+
+.vel-admin-add-channels-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vel-admin-add-channels-wrap.hidden {
+  display: none !important;
+}
+
+.vel-admin-add-channels-btn {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.4rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(138, 43, 226, 0.45);
+  background: rgba(138, 43, 226, 0.12);
+  color: rgba(230, 220, 255, 0.96);
+  cursor: pointer;
+  font-family: Inter, var(--font);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vel-admin-add-channels-btn:hover {
+  border-color: rgba(196, 181, 250, 0.65);
+  background: rgba(138, 43, 226, 0.2);
 }
 
 .back-btn {
@@ -2116,6 +2161,61 @@ a.topbar__admin-link {
   max-width: calc(100vw - 2rem);
 }
 
+.admin-add-channels-dialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: calc(100vw - 1.5rem);
+}
+
+.admin-add-channels-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.admin-add-channels-dialog__panel {
+  max-height: min(88vh, 36rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.add-channels-list {
+  flex: 1;
+  min-height: 8rem;
+  max-height: min(48vh, 22rem);
+  overflow: auto;
+  margin-top: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.add-channels-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+}
+
+.add-channels-row.hidden {
+  display: none !important;
+}
+
+.add-channels-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.add-channels-row label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-channel-assign-dialog::backdrop {
   background: rgba(0, 0, 0, 0.65);
 }
@@ -2276,6 +2376,37 @@ a.topbar__admin-link {
 
 .main--velora .vel-package-card .admin-pkg-del-sb:hover {
   border-color: rgba(251, 113, 133, 0.45);
+  transform: scale(1.06);
+}
+
+.main--velora .vel-package-card .admin-pkg-edit-sb {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 2;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 6, 14, 0.72);
+  color: rgba(196, 181, 253, 0.98);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: Inter, var(--font);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.main--velora .vel-package-card--db .admin-pkg-edit-sb {
+  right: 2.35rem;
+}
+
+.main--velora .vel-package-card .admin-pkg-edit-sb:hover {
+  border-color: rgba(167, 139, 250, 0.55);
   transform: scale(1.06);
 }
 

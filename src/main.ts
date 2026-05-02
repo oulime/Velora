@@ -47,6 +47,15 @@ import {
   listStreamsForOpenedPackage,
 } from "./franceStreamCuration";
 import { fetchDbStreamCurations, upsertStreamCuration } from "./channelCurationSupabase";
+import {
+  deletePackageCoverOverride,
+  fetchDbPackageCoverOverrides,
+  upsertPackageCoverOverride,
+} from "./packageCoverOverridesSupabase";
+import {
+  extractPresetFromImageUrlCached,
+  invalidatePackageImageThemeCache,
+} from "./packageImageTheme";
 
 tryConsumeAdminAccessFromUrl();
 
@@ -106,12 +115,32 @@ function flashCurateStatus(message: string, isError: boolean): void {
   }, 6000);
 }
 
+const elDialogPackageCover = document.getElementById("dialog-package-cover") as HTMLDialogElement | null;
+const elPcePackageId = document.getElementById("pce-package-id") as HTMLInputElement | null;
+const elPcePackageName = document.getElementById("pce-package-name") as HTMLParagraphElement | null;
+const elPceCover = document.getElementById("pce-cover") as HTMLInputElement | null;
+const elPceCoverUrl = document.getElementById("pce-cover-url") as HTMLInputElement | null;
+const elPceClear = document.getElementById("pce-clear") as HTMLButtonElement | null;
+const elPceCancel = document.getElementById("pce-cancel") as HTMLButtonElement | null;
+const elPceSubmit = document.getElementById("pce-submit") as HTMLButtonElement | null;
+const elPceStatus = document.getElementById("pce-status") as HTMLParagraphElement | null;
+
 const elDialogChannelAssign = document.getElementById("dialog-channel-assign") as HTMLDialogElement | null;
 const elChannelAssignSelect = document.getElementById("channel-assign-package") as HTMLSelectElement | null;
 const elChannelAssignStatus = document.getElementById("channel-assign-status") as HTMLParagraphElement | null;
 const elChannelAssignCancel = document.getElementById("channel-assign-cancel") as HTMLButtonElement | null;
 const elChannelAssignOk = document.getElementById("channel-assign-ok") as HTMLButtonElement | null;
 let pendingAssignStreamId: number | null = null;
+
+const elDialogAddChannels = document.getElementById("dialog-admin-add-channels") as HTMLDialogElement | null;
+const elAddChannelsHint = document.getElementById("add-channels-package-hint") as HTMLParagraphElement | null;
+const elAddChannelsSearch = document.getElementById("add-channels-search") as HTMLInputElement | null;
+const elAddChannelsList = document.getElementById("add-channels-list") as HTMLDivElement | null;
+const elAddChannelsStatus = document.getElementById("add-channels-status") as HTMLParagraphElement | null;
+const elAddChannelsCancel = document.getElementById("add-channels-cancel") as HTMLButtonElement | null;
+const elAddChannelsSubmit = document.getElementById("add-channels-submit") as HTMLButtonElement | null;
+const elAddChannelsSelectVisible = document.getElementById("add-channels-select-visible") as HTMLButtonElement | null;
+const elBtnAdminAddChannels = document.getElementById("btn-admin-add-channels") as HTMLButtonElement | null;
 
 applySettingsRouteOnLoad();
 const elPlayerContainer = $("#player-container") as HTMLElement;
@@ -147,6 +176,8 @@ let dbAdminCountries: AdminCountry[] = [];
 let dbAdminPackages: AdminPackage[] = [];
 /** Supabase `country_id` → `stream_id` → `target_package_id` (or `hidden`). */
 let streamCurationByCountry: Map<string, Map<number, string>> = new Map();
+/** `package_id` (fournisseur ou velagg:…) → `cover_url` pour images hors `admin_packages`. */
+let packageCoverOverrides: Map<string, string> = new Map();
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
 /** When `"0"`, hide + / Supabase delete in the grid (admin session only). Default = visible. */
@@ -207,7 +238,7 @@ function applyPresetTheme(key: string): void {
   elMain.style.removeProperty("--vel-back");
 }
 
-function applyThemeForPackage(pkg: AdminPackage | null): void {
+function applyThemeForPackageSync(pkg: AdminPackage | null): void {
   if (!pkg) {
     applyPresetTheme("default");
     return;
@@ -224,6 +255,59 @@ function applyThemeForPackage(pkg: AdminPackage | null): void {
   const back = pkg.theme_back?.trim();
   if (back) elMain.style.setProperty("--vel-back", back);
   else elMain.style.removeProperty("--vel-back");
+}
+
+function resolveHeroImageUrlForTheme(pkg: AdminPackage): string | null {
+  const st = state;
+  if (!st) return null;
+  const id = pkg.id;
+  if (isLikelyUuid(id)) {
+    const u = pkg.cover_url?.trim();
+    if (u && /^https?:\/\//i.test(u)) return u;
+    return null;
+  }
+  const o = packageCoverOverrides.get(id)?.trim();
+  if (o && /^https?:\/\//i.test(o)) return o;
+  const list = streamsDisplayedForOpenPackage(id);
+  const ch = list.map((s) => resolvedIconUrl(s.stream_icon, st.base)).find(Boolean);
+  return ch?.trim() || null;
+}
+
+async function applyPackageImageThemeAsync(pkg: AdminPackage | null): Promise<void> {
+  if (!pkg) return;
+  const hasCustom =
+    Boolean(pkg.theme_bg?.trim()) ||
+    Boolean(pkg.theme_surface?.trim()) ||
+    Boolean(pkg.theme_primary?.trim()) ||
+    Boolean(pkg.theme_glow?.trim());
+  if (hasCustom) return;
+  const url = resolveHeroImageUrlForTheme(pkg);
+  if (!url) return;
+  const pid = pkg.id;
+  const extracted = await extractPresetFromImageUrlCached(pid, url);
+  if (!extracted) return;
+  if (uiAdminPackageId !== pid) return;
+  const now = findPackageById(pid);
+  if (!now) return;
+  if (
+    now.theme_bg?.trim() ||
+    now.theme_surface?.trim() ||
+    now.theme_primary?.trim() ||
+    now.theme_glow?.trim()
+  ) {
+    return;
+  }
+  const urlNow = resolveHeroImageUrlForTheme(now);
+  if (urlNow !== url) return;
+  elMain.style.setProperty("--vel-bg", extracted.bg);
+  elMain.style.setProperty("--vel-surface", extracted.surface);
+  elMain.style.setProperty("--vel-primary", extracted.primary);
+  elMain.style.setProperty("--vel-accent-glow", extracted.glow);
+}
+
+function applyThemeForPackage(pkg: AdminPackage | null): void {
+  applyThemeForPackageSync(pkg);
+  void applyPackageImageThemeAsync(pkg);
 }
 
 function setTabsActive(tab: UiTab): void {
@@ -464,6 +548,17 @@ async function persistStreamCuration(streamId: number, targetPackageId: string):
     streamCurationByCountry.set(cid, inner);
   }
   inner.set(streamId, targetPackageId);
+  if (targetPackageId === STREAM_CURATION_HIDDEN) {
+    if (uiAdminPackageId) invalidatePackageImageThemeCache(uiAdminPackageId);
+  } else {
+    invalidatePackageImageThemeCache(targetPackageId);
+    if (uiAdminPackageId && uiAdminPackageId !== targetPackageId) {
+      invalidatePackageImageThemeCache(uiAdminPackageId);
+    }
+  }
+  if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId) {
+    applyThemeForPackage(findPackageById(uiAdminPackageId) ?? null);
+  }
   return true;
 }
 
@@ -494,6 +589,87 @@ function openChannelAssignDialog(streamId: number): void {
 function closeChannelAssignDialog(): void {
   pendingAssignStreamId = null;
   elDialogChannelAssign?.close();
+}
+
+function syncAdminAddChannelsButton(): void {
+  const wrap = document.getElementById("vel-admin-add-channels-wrap");
+  if (!wrap) return;
+  const show =
+    showAdminChannelCurateTools() &&
+    state != null &&
+    uiShell === "content" &&
+    uiTab === "live" &&
+    uiAdminPackageId != null;
+  wrap.classList.toggle("hidden", !show);
+}
+
+/** Chaînes du pays hors de ce bouquet (liste courante + règles), pour import admin. */
+function candidatesStreamsNotInOpenPackage(packageId: string): LiveStream[] {
+  if (!state) return [];
+  const inside = new Set(streamsDisplayedForOpenPackage(packageId).map((s) => s.stream_id));
+  return unionStreamsForCurrentCountry()
+    .filter((s) => !inside.has(s.stream_id) && !shouldHideChannelByName(s.name))
+    .sort((a, b) => displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr"));
+}
+
+function filterAddChannelsListRows(): void {
+  if (!elAddChannelsSearch || !elAddChannelsList) return;
+  const q = elAddChannelsSearch.value.trim().toLowerCase();
+  elAddChannelsList.querySelectorAll(".add-channels-row").forEach((rowEl) => {
+    const row = rowEl as HTMLElement;
+    const hay = (row.dataset.searchHay ?? "").toLowerCase();
+    row.classList.toggle("hidden", q.length > 0 && !hay.includes(q));
+  });
+}
+
+function buildAddChannelsDialogList(packageId: string): void {
+  if (!elAddChannelsList) return;
+  elAddChannelsList.innerHTML = "";
+  const cand = candidatesStreamsNotInOpenPackage(packageId);
+  for (const s of cand) {
+    const row = document.createElement("div");
+    row.className = "add-channels-row";
+    const hay = `${displayChannelName(s.name)} ${s.name}`.replace(/\s+/g, " ").trim();
+    row.dataset.searchHay = hay;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = `add-ch-${s.stream_id}`;
+    cb.dataset.streamId = String(s.stream_id);
+    const lab = document.createElement("label");
+    lab.htmlFor = cb.id;
+    lab.textContent = displayChannelName(s.name);
+    lab.title = s.name;
+    row.append(cb, lab);
+    elAddChannelsList.appendChild(row);
+  }
+  if (cand.length === 0) {
+    const p = document.createElement("p");
+    p.className = "vel-empty-msg";
+    p.style.margin = "0.5rem 0";
+    p.textContent =
+      "Aucune chaîne disponible ailleurs pour ce pays (ou elles sont déjà dans ce bouquet).";
+    elAddChannelsList.appendChild(p);
+  }
+}
+
+function openAddChannelsToPackageDialog(): void {
+  if (!elDialogAddChannels || !uiAdminPackageId || !state) return;
+  if (!showAdminChannelCurateTools()) return;
+  const pkg = findPackageById(uiAdminPackageId);
+  const label = pkg?.name ?? uiAdminPackageId;
+  if (elAddChannelsHint) {
+    elAddChannelsHint.textContent = `Bouquet « ${label} » — les chaînes ajoutées disparaissent des autres bouquets de ce pays.`;
+  }
+  if (elAddChannelsSearch) elAddChannelsSearch.value = "";
+  elAddChannelsStatus && (elAddChannelsStatus.textContent = "");
+  elAddChannelsStatus?.classList.remove("error");
+  buildAddChannelsDialogList(uiAdminPackageId);
+  filterAddChannelsListRows();
+  elDialogAddChannels.showModal();
+}
+
+function closeAddChannelsToPackageDialog(): void {
+  elDialogAddChannels?.close();
 }
 
 function renderPackageChannelList(): void {
@@ -611,6 +787,8 @@ function renderPackageChannelList(): void {
         : "Aucune chaîne dans cette catégorie.";
     elDynamicList.appendChild(empty);
   }
+
+  syncAdminAddChannelsButton();
 }
 
 /** Provider-inferred countries plus Supabase-only rows (deduped by display name). */
@@ -718,12 +896,19 @@ elToggleAdminUi?.addEventListener("change", () => {
   if (!elToggleAdminUi.checked && elDialogChannelAssign?.open) {
     closeChannelAssignDialog();
   }
+  if (!elToggleAdminUi.checked && elDialogPackageCover?.open) {
+    elDialogPackageCover.close();
+  }
+  if (!elToggleAdminUi.checked && elDialogAddChannels?.open) {
+    closeAddChannelsToPackageDialog();
+  }
   if (state && uiShell === "packages" && uiTab === "live") {
     renderPackagesGrid();
   }
   if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId) {
     renderPackageChannelList();
   }
+  syncAdminAddChannelsButton();
 });
 
 window.addEventListener("popstate", () => {
@@ -734,6 +919,10 @@ window.addEventListener("velora-admin-session-changed", () => {
   syncAdminSettingsButton();
   void refreshSupabaseHierarchy().then(() => {
     if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+    if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId) {
+      renderPackageChannelList();
+    }
+    syncAdminAddChannelsButton();
   });
 });
 
@@ -831,6 +1020,7 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     dbAdminCountries = [];
     dbAdminPackages = [];
     streamCurationByCountry = new Map();
+    packageCoverOverrides = new Map();
     populateCountrySelectFromAdmin();
     return;
   }
@@ -843,10 +1033,16 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     } catch {
       streamCurationByCountry = new Map();
     }
+    try {
+      packageCoverOverrides = await fetchDbPackageCoverOverrides(sb);
+    } catch {
+      packageCoverOverrides = new Map();
+    }
   } catch {
     dbAdminCountries = [];
     dbAdminPackages = [];
     streamCurationByCountry = new Map();
+    packageCoverOverrides = new Map();
   }
   populateCountrySelectFromAdmin();
 }
@@ -892,6 +1088,11 @@ function findPackageById(packageId: string): AdminPackage | undefined {
     }
   }
   return adminConfig.packages.find((p) => p.id === packageId) ?? dbAdminPackages.find((p) => p.id === packageId);
+}
+
+function httpsCatalogCoverOverride(packageId: string): string | null {
+  const u = packageCoverOverrides.get(packageId)?.trim();
+  return u && /^https?:\/\//i.test(u) ? u : null;
 }
 
 function appendAddPackageCard(): void {
@@ -956,6 +1157,19 @@ function renderPackagesGrid(): void {
       card.setAttribute("aria-label", pkg.name);
 
       if (showAdminGridTools) {
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "admin-pkg-edit-sb";
+        edit.setAttribute("aria-label", `Image — ${pkg.name}`);
+        edit.title = "Modifier l’image du bouquet";
+        edit.textContent = "🖼";
+        edit.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openPackageCoverEditDialog(pkg);
+        });
+        card.appendChild(edit);
+
         const del = document.createElement("button");
         del.type = "button";
         del.className = "admin-pkg-del-sb";
@@ -1030,7 +1244,7 @@ function renderPackagesGrid(): void {
       card.appendChild(title);
 
       card.addEventListener("click", (ev) => {
-        if ((ev.target as HTMLElement).closest(".admin-pkg-del-sb")) return;
+        if ((ev.target as HTMLElement).closest(".admin-pkg-del-sb, .admin-pkg-edit-sb")) return;
         openAdminPackage(pkg.id);
       });
       card.addEventListener("keydown", (ev) => {
@@ -1049,26 +1263,56 @@ function renderPackagesGrid(): void {
     card.dataset.packageId = pkg.id;
     card.setAttribute("aria-label", pkg.name);
 
-    if (channelFirstIcon) {
+    if (showAdminGridTools) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "admin-pkg-edit-sb";
+      edit.setAttribute("aria-label", `Image — ${pkg.name}`);
+      edit.title = "Modifier l’image du bouquet";
+      edit.textContent = "🖼";
+      edit.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openPackageCoverEditDialog(pkg);
+      });
+      card.appendChild(edit);
+    }
+
+    const httpsOverride = httpsCatalogCoverOverride(pkg.id);
+    const appendEmoji = (sym: string) => {
+      const em = document.createElement("span");
+      em.className = "vel-package-card__emoji";
+      em.textContent = sym;
+      em.setAttribute("aria-hidden", "true");
+      card.appendChild(em);
+    };
+    const appendProxiedIcon = (href: string, onFailEmoji: string) => {
       const img = document.createElement("img");
       img.alt = "";
       img.setAttribute("role", "presentation");
-      img.src = proxiedUrl(channelFirstIcon);
+      img.src = proxiedUrl(href);
       img.addEventListener("error", () => {
         img.remove();
-        const em = document.createElement("span");
-        em.className = "vel-package-card__emoji";
-        em.textContent = "📡";
-        em.setAttribute("aria-hidden", "true");
-        card.prepend(em);
+        appendEmoji(onFailEmoji);
       });
       card.appendChild(img);
+    };
+
+    if (httpsOverride) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.setAttribute("role", "presentation");
+      img.src = httpsOverride;
+      img.addEventListener("error", () => {
+        img.remove();
+        if (channelFirstIcon) appendProxiedIcon(channelFirstIcon, "📡");
+        else appendEmoji("📡");
+      });
+      card.appendChild(img);
+    } else if (channelFirstIcon) {
+      appendProxiedIcon(channelFirstIcon, "📡");
     } else {
-      const em = document.createElement("span");
-      em.className = "vel-package-card__emoji";
-      em.textContent = "📡";
-      em.setAttribute("aria-hidden", "true");
-      card.appendChild(em);
+      appendEmoji("📡");
     }
 
     const title = document.createElement("span");
@@ -1076,7 +1320,10 @@ function renderPackagesGrid(): void {
     title.textContent = pkg.name;
     card.appendChild(title);
 
-    card.addEventListener("click", () => openAdminPackage(pkg.id));
+    card.addEventListener("click", (ev) => {
+      if ((ev.target as HTMLElement).closest(".admin-pkg-edit-sb")) return;
+      openAdminPackage(pkg.id);
+    });
     elPackagesView.appendChild(card);
   }
 
@@ -1106,6 +1353,7 @@ function openAdminPackage(packageId: string): void {
   syncPillDefsForPackage(packageId);
   renderCategoryPills();
   updatePillsVisibility();
+  syncAdminAddChannelsButton();
 }
 
 function goHome(): void {
@@ -1119,6 +1367,7 @@ function goHome(): void {
   elContentView.classList.add("hidden");
   elCatPillsWrap.classList.add("hidden");
   selectedPillId = "all";
+  syncAdminAddChannelsButton();
   if (state) renderPackagesGrid();
 }
 
@@ -1142,8 +1391,8 @@ async function deleteDbPackageById(packageId: string): Promise<void> {
   }
 }
 
-/** One row per normalized pays name (avoids duplicate « France » in the picker when several rows exist in DB). */
-function dedupeDbCountriesForSelect(countries: AdminCountry[]): AdminCountry[] {
+/** One row per normalized pays name (évite les doublons « France » si plusieurs lignes en base). */
+function dedupeCountriesByDisplayName(countries: AdminCountry[]): AdminCountry[] {
   if (countries.length === 0) return [];
   const sorted = [...countries].sort((a, b) => a.id.localeCompare(b.id));
   const byKey = new Map<string, AdminCountry>();
@@ -1155,13 +1404,35 @@ function dedupeDbCountriesForSelect(countries: AdminCountry[]): AdminCountry[] {
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
+/** `admin_packages.country_id` : réutilise `admin_countries` si le nom correspond, sinon insert. */
+async function resolveSupabaseCountryIdForNewPackage(selectionValue: string): Promise<string | null> {
+  const v = selectionValue.trim();
+  if (!v) return null;
+  if (isLikelyUuid(v) && dbAdminCountries.some((c) => c.id === v)) return v;
+  const row = countryRowsForSelect().find((c) => c.id === v);
+  if (!row) return null;
+  const name = row.name.trim();
+  if (!name) return null;
+  const existing = matchDbCountryIdByDisplayName(name, dbAdminCountries);
+  if (existing) return existing;
+  const sb = getSupabaseClient();
+  if (!sb) return null;
+  const { data, error } = await sb.from("admin_countries").insert({ name }).select("id").single();
+  if (!error && data && typeof data === "object" && "id" in data) {
+    await refreshSupabaseHierarchy();
+    return String((data as { id: string }).id);
+  }
+  await refreshSupabaseHierarchy();
+  return matchDbCountryIdByDisplayName(name, dbAdminCountries);
+}
+
 function populateAddPackageDialogCountries(): void {
   elDapSbCountry.innerHTML = "";
-  const pickList = dedupeDbCountriesForSelect(dbAdminCountries);
+  const pickList = dedupeCountriesByDisplayName(countryRowsForSelect());
   if (pickList.length === 0) {
     const o = document.createElement("option");
     o.value = "";
-    o.textContent = "— Ajoutez un pays ci-dessus —";
+    o.textContent = "— Connectez-vous au catalogue ou créez un pays ci-dessous —";
     o.disabled = true;
     o.selected = true;
     elDapSbCountry.appendChild(o);
@@ -1177,6 +1448,28 @@ function populateAddPackageDialogCountries(): void {
   }
 }
 
+function preselectDapCountryFromHeader(): void {
+  const opts = [...elDapSbCountry.options].filter((o) => o.value && !o.disabled);
+  if (!opts.length || elDapSbCountry.disabled) return;
+  const tryVal = (val: string | null | undefined): boolean => {
+    if (!val) return false;
+    if (opts.some((o) => o.value === val)) {
+      elDapSbCountry.value = val;
+      return true;
+    }
+    return false;
+  };
+  if (tryVal(selectedAdminCountryId)) return;
+  const label = currentCountryDisplayLabel();
+  if (label) {
+    const nk = normalizeCountryKey(label);
+    const hit = countryRowsForSelect().find((c) => normalizeCountryKey(c.name) === nk);
+    if (hit && tryVal(hit.id)) return;
+  }
+  if (tryVal(matchedDbCountryIdForSelection())) return;
+  elDapSbCountry.selectedIndex = 0;
+}
+
 function openAddPackageDialog(): void {
   const sb = getSupabaseClient();
   if (!isAdminSession() || !readAdminGridToolsEnabled() || !sb) return;
@@ -1186,17 +1479,15 @@ function openAddPackageDialog(): void {
   elDapCover.value = "";
   elDapCoverUrl.value = "";
   populateAddPackageDialogCountries();
-  elDapEmptyCountriesHint?.classList.toggle("hidden", dbAdminCountries.length > 0);
-  const match = matchedDbCountryIdForSelection();
-  if (match && [...elDapSbCountry.options].some((o) => o.value === match)) {
-    elDapSbCountry.value = match;
-  } else if (elDapSbCountry.options.length && !elDapSbCountry.disabled) {
-    elDapSbCountry.selectedIndex = 0;
-  }
+  const merged = countryRowsForSelect();
+  const hasCatalogueCountries = merged.length > 0;
+  document.getElementById("dap-create-country-field")?.classList.toggle("hidden", hasCatalogueCountries);
+  elDapEmptyCountriesHint?.classList.toggle("hidden", hasCatalogueCountries);
+  preselectDapCountryFromHeader();
   elDapName.value = "";
   elDialogAddPkg.showModal();
   queueMicrotask(() => {
-    if (dbAdminCountries.length === 0) elDapNewCountryName.focus();
+    if (!hasCatalogueCountries) elDapNewCountryName.focus();
     else elDapName.focus();
   });
 }
@@ -1205,7 +1496,136 @@ function closeAddPackageDialog(): void {
   elDialogAddPkg.close();
 }
 
+function openPackageCoverEditDialog(pkg: AdminPackage): void {
+  if (!elDialogPackageCover || !elPcePackageId || !elPceCoverUrl || !elPceCover) return;
+  const sb = getSupabaseClient();
+  if (!isAdminSession() || !readAdminGridToolsEnabled() || !sb) return;
+  elPcePackageId.value = pkg.id;
+  if (elPcePackageName) elPcePackageName.textContent = pkg.name;
+  const stored = isLikelyUuid(pkg.id)
+    ? (pkg.cover_url?.trim() ?? "")
+    : (packageCoverOverrides.get(pkg.id)?.trim() ?? "");
+  elPceCoverUrl.value = stored && /^https?:\/\//i.test(stored) ? stored : "";
+  elPceCover.value = "";
+  elPceStatus && (elPceStatus.textContent = "");
+  elPceStatus?.classList.remove("error");
+  elDialogPackageCover.showModal();
+}
+
+function closePackageCoverEditDialog(): void {
+  elDialogPackageCover?.close();
+}
+
 elDapCancel.addEventListener("click", () => closeAddPackageDialog());
+
+elPceCancel?.addEventListener("click", () => closePackageCoverEditDialog());
+elDialogPackageCover?.addEventListener("cancel", () => closePackageCoverEditDialog());
+
+elPceClear?.addEventListener("click", () => {
+  void (async () => {
+    const id = elPcePackageId?.value.trim();
+    const sb = getSupabaseClient();
+    if (!id || !sb) return;
+    elPceStatus && (elPceStatus.textContent = "");
+    elPceStatus?.classList.remove("error");
+    elPceClear.disabled = true;
+    try {
+      if (isLikelyUuid(id)) {
+        const { error } = await sb.from("admin_packages").update({ cover_url: null }).eq("id", id);
+        if (error) {
+          elPceStatus && (elPceStatus.textContent = error.message);
+          elPceStatus?.classList.add("error");
+          return;
+        }
+      } else {
+        const res = await deletePackageCoverOverride(sb, id);
+        if (res.error) {
+          elPceStatus && (elPceStatus.textContent = res.error);
+          elPceStatus?.classList.add("error");
+          return;
+        }
+      }
+      invalidatePackageImageThemeCache(id);
+      await refreshSupabaseHierarchy();
+      closePackageCoverEditDialog();
+      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+      if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId === id) {
+        applyThemeForPackage(findPackageById(id) ?? null);
+      }
+    } finally {
+      elPceClear.disabled = false;
+    }
+  })();
+});
+
+elPceSubmit?.addEventListener("click", () => {
+  void (async () => {
+    const id = elPcePackageId?.value.trim();
+    const sb = getSupabaseClient();
+    if (!id || !sb || !elPceCover || !elPceCoverUrl) return;
+    const file = elPceCover.files?.[0];
+    const urlPaste = elPceCoverUrl.value.trim();
+    elPceStatus && (elPceStatus.textContent = "");
+    elPceStatus?.classList.remove("error");
+    if (file && urlPaste) {
+      elPceStatus && (elPceStatus.textContent = "Utilisez soit un fichier, soit une URL — pas les deux.");
+      elPceStatus?.classList.add("error");
+      return;
+    }
+    if (urlPaste && !/^https?:\/\//i.test(urlPaste)) {
+      elPceStatus && (elPceStatus.textContent = "L’URL doit commencer par http:// ou https://");
+      elPceStatus?.classList.add("error");
+      return;
+    }
+    if (!file && !urlPaste) {
+      elPceStatus && (elPceStatus.textContent = "Choisissez un fichier ou une URL, ou utilisez « Retirer l’image ».");
+      elPceStatus?.classList.add("error");
+      return;
+    }
+
+    elPceSubmit.disabled = true;
+    try {
+      let finalUrl: string;
+      if (file) {
+        const up = await uploadPackageCoverFile(sb, id, file);
+        if ("error" in up) {
+          elPceStatus && (elPceStatus.textContent = up.error);
+          elPceStatus?.classList.add("error");
+          return;
+        }
+        finalUrl = up.url;
+      } else {
+        finalUrl = urlPaste;
+      }
+
+      if (isLikelyUuid(id)) {
+        const { error } = await sb.from("admin_packages").update({ cover_url: finalUrl }).eq("id", id);
+        if (error) {
+          elPceStatus && (elPceStatus.textContent = error.message);
+          elPceStatus?.classList.add("error");
+          return;
+        }
+      } else {
+        const res = await upsertPackageCoverOverride(sb, id, finalUrl);
+        if (res.error) {
+          elPceStatus && (elPceStatus.textContent = res.error);
+          elPceStatus?.classList.add("error");
+          return;
+        }
+      }
+
+      invalidatePackageImageThemeCache(id);
+      await refreshSupabaseHierarchy();
+      closePackageCoverEditDialog();
+      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+      if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId === id) {
+        applyThemeForPackage(findPackageById(id) ?? null);
+      }
+    } finally {
+      elPceSubmit.disabled = false;
+    }
+  })();
+});
 
 elChannelAssignCancel?.addEventListener("click", () => closeChannelAssignDialog());
 elDialogChannelAssign?.addEventListener("cancel", () => closeChannelAssignDialog());
@@ -1233,6 +1653,63 @@ elChannelAssignOk?.addEventListener("click", () => {
   })();
 });
 
+elBtnAdminAddChannels?.addEventListener("click", () => {
+  openAddChannelsToPackageDialog();
+});
+
+elAddChannelsCancel?.addEventListener("click", () => closeAddChannelsToPackageDialog());
+elDialogAddChannels?.addEventListener("cancel", () => closeAddChannelsToPackageDialog());
+
+elAddChannelsSearch?.addEventListener("input", () => filterAddChannelsListRows());
+
+elAddChannelsSelectVisible?.addEventListener("click", () => {
+  if (!elAddChannelsList) return;
+  elAddChannelsList.querySelectorAll(".add-channels-row:not(.hidden) input[type=checkbox]").forEach((cb) => {
+    (cb as HTMLInputElement).checked = true;
+  });
+});
+
+elAddChannelsSubmit?.addEventListener("click", () => {
+  void (async () => {
+    if (!elAddChannelsList || !uiAdminPackageId) return;
+    const pkgId = uiAdminPackageId;
+    const boxes = elAddChannelsList.querySelectorAll<HTMLInputElement>(
+      "input[type=checkbox]:checked"
+    );
+    const ids: number[] = [];
+    boxes.forEach((cb) => {
+      const n = Number(cb.dataset.streamId);
+      if (Number.isFinite(n)) ids.push(n);
+    });
+    elAddChannelsStatus && (elAddChannelsStatus.textContent = "");
+    elAddChannelsStatus?.classList.remove("error");
+    if (ids.length === 0) {
+      elAddChannelsStatus && (elAddChannelsStatus.textContent = "Cochez au moins une chaîne.");
+      elAddChannelsStatus?.classList.add("error");
+      return;
+    }
+    elAddChannelsSubmit.disabled = true;
+    let ok = 0;
+    let fail = 0;
+    for (const sid of ids) {
+      if (await persistStreamCuration(sid, pkgId)) ok++;
+      else fail++;
+    }
+    elAddChannelsSubmit.disabled = false;
+    if (fail > 0) {
+      elAddChannelsStatus &&
+        (elAddChannelsStatus.textContent = `${ok} chaîne(s) ajoutée(s), ${fail} erreur(s). Réessayez ou vérifiez Supabase.`);
+      elAddChannelsStatus?.classList.add("error");
+      buildAddChannelsDialogList(pkgId);
+      filterAddChannelsListRows();
+    } else {
+      closeAddChannelsToPackageDialog();
+      renderPackageChannelList();
+      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+    }
+  })();
+});
+
 elDapAddCountry.addEventListener("click", () => {
   void (async () => {
     const sb = getSupabaseClient();
@@ -1256,10 +1733,14 @@ elDapAddCountry.addEventListener("click", () => {
     elDapNewCountryName.value = "";
     await refreshSupabaseHierarchy();
     populateAddPackageDialogCountries();
-    elDapEmptyCountriesHint?.classList.add("hidden");
+    const mergedAfter = countryRowsForSelect();
+    document.getElementById("dap-create-country-field")?.classList.toggle("hidden", mergedAfter.length > 0);
+    elDapEmptyCountriesHint?.classList.toggle("hidden", mergedAfter.length > 0);
     const id = data && typeof data === "object" && "id" in data ? String((data as { id: string }).id) : "";
     if (id && [...elDapSbCountry.options].some((o) => o.value === id)) {
       elDapSbCountry.value = id;
+    } else {
+      preselectDapCountryFromHeader();
     }
     elDapStatus.textContent = "Pays ajouté. Saisissez le nom du package puis « Ajouter ».";
     elDapName.focus();
@@ -1275,7 +1756,7 @@ elDapSubmit.addEventListener("click", () => {
     elDapStatus.textContent = "";
     elDapStatus.classList.remove("error");
     if (!countryId) {
-      elDapStatus.textContent = "Choisissez un pays Supabase.";
+      elDapStatus.textContent = "Choisissez un pays dans la liste.";
       elDapStatus.classList.add("error");
       return;
     }
@@ -1298,8 +1779,17 @@ elDapSubmit.addEventListener("click", () => {
     }
 
     elDapSubmit.disabled = true;
+    const resolvedCountryId = await resolveSupabaseCountryIdForNewPackage(countryId);
+    if (!resolvedCountryId) {
+      elDapSubmit.disabled = false;
+      elDapStatus.textContent =
+        "Impossible d’associer ce pays à Supabase (admin_countries). Vérifiez les droits ou réessayez.";
+      elDapStatus.classList.add("error");
+      return;
+    }
+
     const insertRow: { country_id: string; name: string; cover_url?: string | null } = {
-      country_id: countryId,
+      country_id: resolvedCountryId,
       name,
       cover_url: file ? null : urlPaste || null,
     };
@@ -1324,6 +1814,7 @@ elDapSubmit.addEventListener("click", () => {
         elDapStatus.textContent = `Package créé ; image non enregistrée : ${up.error}`;
         elDapStatus.classList.remove("error");
         elDapSubmit.disabled = false;
+        invalidatePackageImageThemeCache(newId);
         await refreshSupabaseHierarchy();
         if (state && uiShell === "packages" && uiTab === "live") {
           renderPackagesGrid();
@@ -1335,6 +1826,7 @@ elDapSubmit.addEventListener("click", () => {
         elDapStatus.textContent = `Package créé ; fichier reçu mais URL non sauvegardée : ${upErr.message}`;
         elDapStatus.classList.add("error");
         elDapSubmit.disabled = false;
+        invalidatePackageImageThemeCache(newId);
         await refreshSupabaseHierarchy();
         if (state && uiShell === "packages" && uiTab === "live") {
           renderPackagesGrid();
@@ -1344,6 +1836,7 @@ elDapSubmit.addEventListener("click", () => {
     }
     elDapSubmit.disabled = false;
     closeAddPackageDialog();
+    if (newId) invalidatePackageImageThemeCache(newId);
     await refreshSupabaseHierarchy();
     if (state && uiShell === "packages" && uiTab === "live") {
       renderPackagesGrid();
@@ -1497,6 +1990,7 @@ function disconnect(): void {
   dbAdminCountries = [];
   dbAdminPackages = [];
   streamCurationByCountry = new Map();
+  packageCoverOverrides = new Map();
   populateCountrySelectFromAdmin();
   state = null;
   activeStreamId = null;

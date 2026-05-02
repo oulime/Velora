@@ -215,20 +215,27 @@
           <div id="packages-view" class="grid vel-packages" aria-label="Bouquets"></div>
 
           <div id="content-view" class="hidden">
-            <button type="button" id="btn-back-home" class="back-btn" title="Retour à l'accueil">
-              <span class="back-btn__icon" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path
-                    d="M14 6L8 12l6 6"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </span>
-              <span class="back-btn__text">Accueil</span>
-            </button>
+            <div class="vel-content-toolbar">
+              <button type="button" id="btn-back-home" class="back-btn" title="Retour à l'accueil">
+                <span class="back-btn__icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                      d="M14 6L8 12l6 6"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span class="back-btn__text">Accueil</span>
+              </button>
+              <div id="vel-admin-add-channels-wrap" class="vel-admin-add-channels-wrap hidden">
+                <button type="button" id="btn-admin-add-channels" class="vel-admin-add-channels-btn">
+                  + Ajouter des chaînes au bouquet
+                </button>
+              </div>
+            </div>
             <div id="cat-pills-wrap" class="cat-pills-wrap vel-cat-pills-wrap hidden">
               <div id="cat-pills" class="vel-pills" role="tablist" aria-label="Filtres"></div>
             </div>
@@ -237,6 +244,60 @@
         </div>
       </main>
     </div>
+
+    <dialog id="dialog-admin-add-channels" class="admin-add-channels-dialog">
+      <div class="admin-add-package-dialog__panel admin-add-channels-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Ajouter des chaînes</h2>
+        <p id="add-channels-package-hint" class="admin-add-package-dialog__hint"></p>
+        <div class="field">
+          <label for="add-channels-search">Rechercher</label>
+          <input
+            id="add-channels-search"
+            type="search"
+            class="admin-add-package-dialog__input"
+            placeholder="Nom de chaîne…"
+            autocomplete="off"
+          />
+        </div>
+        <div id="add-channels-list" class="add-channels-list" role="group" aria-label="Chaînes disponibles"></div>
+        <p id="add-channels-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="add-channels-select-visible" class="countries-admin-cancel">
+            Tout sélectionner (liste)
+          </button>
+          <button type="button" id="add-channels-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="add-channels-submit" class="primary">Ajouter la sélection</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="dialog-package-cover" class="admin-channel-assign-dialog">
+      <div class="admin-add-package-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Image du bouquet</h2>
+        <p id="pce-package-name" class="admin-add-package-dialog__hint"></p>
+        <input type="hidden" id="pce-package-id" value="" />
+        <div class="field">
+          <label for="pce-cover">Fichier image (optionnel)</label>
+          <input id="pce-cover" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+        </div>
+        <div class="field">
+          <label for="pce-cover-url">Ou URL (https)</label>
+          <input
+            id="pce-cover-url"
+            type="url"
+            class="admin-add-package-dialog__input"
+            placeholder="https://…"
+            autocomplete="off"
+          />
+        </div>
+        <p id="pce-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="pce-clear" class="countries-admin-cancel">Retirer l’image</button>
+          <button type="button" id="pce-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="pce-submit" class="primary">Enregistrer</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="dialog-channel-assign" class="admin-channel-assign-dialog">
       <div class="admin-add-package-dialog__panel">
@@ -260,15 +321,15 @@
       <div class="admin-add-package-dialog__panel">
         <h2 class="admin-add-package-dialog__title">Nouveau package (Supabase)</h2>
         <p class="admin-add-package-dialog__hint">
-          Le bouquet est enregistré dans la base. Associez-y des catégories et règles dans Supabase pour le lier au
-          catalogue.
+          Le bouquet est enregistré dans la base. La liste des pays est la <strong>même</strong> que dans le menu
+          Pays du lecteur ; une ligne <code>admin_countries</code> est créée dans Supabase seulement si besoin pour
+          lier le bouquet.
         </p>
         <p id="dap-empty-countries-hint" class="admin-add-package-dialog__microhint hidden">
-          Aucun pays en base pour l’instant. Créez-en un ci-dessous — utilisez le <strong>même nom</strong> que dans le
-          menu Pays du lecteur pour afficher ensuite les bouquets Supabase avec ce pays.
+          Aucun pays dans le lecteur (connectez-vous au catalogue) ou ajoutez un pays manuellement ci-dessous.
         </p>
-        <div class="field">
-          <label for="dap-new-country-name">Créer un pays (Supabase)</label>
+        <div id="dap-create-country-field" class="field">
+          <label for="dap-new-country-name">Créer un pays (secours)</label>
           <div class="admin-add-package-dialog__row">
             <input
               id="dap-new-country-name"
@@ -281,7 +342,7 @@
           </div>
         </div>
         <div class="field">
-          <label for="dap-sb-country">Pays (Supabase)</label>
+          <label for="dap-sb-country">Pays</label>
           <select id="dap-sb-country" class="admin-add-package-dialog__select"></select>
         </div>
         <div class="field">
