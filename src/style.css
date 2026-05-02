@@ -1498,6 +1498,89 @@ a.topbar__admin-link {
   display: none !important;
 }
 
+.vel-admin-tools-wrap.hidden {
+  display: none !important;
+}
+
+.vel-admin-tools-wrap {
+  flex-shrink: 0;
+}
+
+.vel-admin-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-family: Inter, var(--font);
+  user-select: none;
+}
+
+.vel-admin-tools__switch {
+  position: relative;
+  width: 2.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+}
+
+.vel-admin-tools__switch input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.vel-admin-tools__text {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vel-muted, #8e8c9e);
+  max-width: 3.2rem;
+  line-height: 1.1;
+}
+
+.vel-admin-tools:hover .vel-admin-tools__text {
+  color: var(--vel-text, #fff);
+}
+
+.vel-admin-tools__track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.vel-admin-tools__track::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.12rem;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  transform: translate(0, -50%);
+  transition: transform 0.2s ease, background 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.vel-admin-tools__switch input:checked + .vel-admin-tools__track {
+  background: rgba(138, 43, 226, 0.45);
+  border-color: rgba(138, 43, 226, 0.65);
+}
+
+.vel-admin-tools__switch input:checked + .vel-admin-tools__track::after {
+  transform: translate(0.95rem, -50%);
+  background: #fff;
+}
+
 .vel-logout {
   font-size: 0.72rem;
   padding: 0.35rem 0.55rem;
@@ -2068,6 +2151,136 @@ a.topbar__admin-link {
   font-weight: 600;
   text-align: center;
   color: rgba(255, 205, 212, 0.94);
+}
+
+/* ——— In-app admin: + package card + Supabase dialog ——— */
+.main--velora .vel-package-card--add {
+  cursor: pointer;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: none;
+}
+
+.main--velora .vel-package-card--add:hover {
+  border-color: rgba(138, 43, 226, 0.55);
+  box-shadow: 0 0 0 1px rgba(138, 43, 226, 0.25);
+}
+
+.main--velora .vel-package-card__add-plus {
+  font-size: 2.25rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--vel-primary);
+  text-shadow: 0 0 18px var(--vel-accent-glow);
+}
+
+.main--velora .vel-package-card--db {
+  position: relative;
+  cursor: pointer;
+}
+
+.main--velora .vel-package-card .admin-pkg-del-sb {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 2;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 6, 14, 0.72);
+  color: var(--danger);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: Inter, var(--font);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.main--velora .vel-package-card .admin-pkg-del-sb:hover {
+  border-color: rgba(251, 113, 133, 0.45);
+  transform: scale(1.06);
+}
+
+.admin-add-package-dialog {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: calc(100vw - 2rem);
+}
+
+.admin-add-package-dialog::backdrop {
+  background: rgba(4, 3, 8, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.admin-add-package-dialog__panel {
+  width: min(22rem, 100%);
+  padding: 1.15rem 1.25rem 1.25rem;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+.admin-add-package-dialog__title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family: Inter, var(--font);
+}
+
+.admin-add-package-dialog__hint {
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.admin-add-package-dialog__select {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+.admin-add-package-dialog__microhint {
+  margin: 0 0 0.85rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.admin-add-package-dialog__microhint.hidden {
+  display: none !important;
+}
+
+.admin-add-package-dialog__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.admin-add-package-dialog__input {
+  flex: 1;
+  min-width: 8rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font);
 }
 
 .vel-empty-msg {

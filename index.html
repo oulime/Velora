@@ -172,6 +172,15 @@
               >
                 Paramètres
               </button>
+              <div id="vel-admin-tools-wrap" class="vel-admin-tools-wrap hidden">
+                <label class="vel-admin-tools" title="Afficher ou masquer le + et la suppression des bouquets Supabase">
+                  <span class="vel-admin-tools__switch">
+                    <input type="checkbox" id="toggle-admin-ui" role="switch" aria-checked="true" />
+                    <span class="vel-admin-tools__track" aria-hidden="true"></span>
+                  </span>
+                  <span class="vel-admin-tools__text">Outils</span>
+                </label>
+              </div>
               <select id="country-select" class="country-select" aria-label="Pays"></select>
               <button type="button" id="btn-logout" class="vel-logout" title="Déconnexion">
                 Out
@@ -226,6 +235,47 @@
         </div>
       </main>
     </div>
+
+    <dialog id="dialog-admin-add-package" class="admin-add-package-dialog">
+      <div class="admin-add-package-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Nouveau package (Supabase)</h2>
+        <p class="admin-add-package-dialog__hint">
+          Le bouquet est enregistré dans la base. Associez-y des catégories et règles dans Supabase pour le lier au
+          catalogue.
+        </p>
+        <p id="dap-empty-countries-hint" class="admin-add-package-dialog__microhint hidden">
+          Aucun pays en base pour l’instant. Créez-en un ci-dessous — utilisez le <strong>même nom</strong> que dans le
+          menu Pays du lecteur pour afficher ensuite les bouquets Supabase avec ce pays.
+        </p>
+        <div class="field">
+          <label for="dap-new-country-name">Créer un pays (Supabase)</label>
+          <div class="admin-add-package-dialog__row">
+            <input
+              id="dap-new-country-name"
+              type="text"
+              class="admin-add-package-dialog__input"
+              placeholder="Ex. France"
+              autocomplete="off"
+            />
+            <button type="button" id="dap-add-country" class="countries-admin-cancel">Ajouter le pays</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="dap-sb-country">Pays (Supabase)</label>
+          <select id="dap-sb-country" class="admin-add-package-dialog__select"></select>
+        </div>
+        <div class="field">
+          <label for="dap-name">Nom du package</label>
+          <input id="dap-name" type="text" placeholder="Ex. Sports HD" autocomplete="off" />
+        </div>
+        <p id="dap-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="dap-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="dap-submit" class="primary">Ajouter</button>
+        </div>
+      </div>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

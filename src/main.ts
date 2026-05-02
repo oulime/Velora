@@ -12,8 +12,14 @@ import {
   openSettingsPage,
   syncSettingsFromUrl,
 } from "./settingsPage";
-import { type AdminConfig, type AdminPackage, EMPTY_ADMIN_CONFIG } from "./adminHierarchyConfig";
+import {
+  type AdminConfig,
+  type AdminCountry,
+  type AdminPackage,
+  EMPTY_ADMIN_CONFIG,
+} from "./adminHierarchyConfig";
 import { THEMES, presetForPackageName } from "./packageThemePresets";
+import { normalizeCountryKey } from "./canonicalCountries";
 import { fetchAndApplyCanonicalCountries } from "./canonicalCountriesSupabase";
 import { fetchAndApplyChannelNamePrefixes } from "./channelNamePrefixesSupabase";
 import { fetchAndApplyChannelHideNeedles } from "./channelHideNeedlesSupabase";
@@ -26,6 +32,13 @@ import {
   normalizeServerInput,
   sameOrigin,
 } from "./nodecastCatalog";
+import {
+  fetchDbAdminCountries,
+  fetchDbAdminPackages,
+  getSupabaseClient,
+  isLikelyUuid,
+  matchDbCountryIdByDisplayName,
+} from "./supabaseAdminHierarchy";
 
 tryConsumeAdminAccessFromUrl();
 
@@ -51,8 +64,19 @@ const elVideo = $("#video") as HTMLVideoElement;
 const elNowPlaying = $("#now-playing") as HTMLDivElement;
 const elBtnLogout = $("#btn-logout") as HTMLButtonElement;
 const elBtnSettings = $("#btn-settings") as HTMLButtonElement | null;
+const elVelAdminToolsWrap = document.getElementById("vel-admin-tools-wrap") as HTMLElement | null;
+const elToggleAdminUi = document.getElementById("toggle-admin-ui") as HTMLInputElement | null;
 const elHeaderLoginOnly = document.querySelector(".header--login-only") as HTMLElement | null;
 const elCountrySelect = $("#country-select") as HTMLSelectElement;
+const elDialogAddPkg = document.getElementById("dialog-admin-add-package") as HTMLDialogElement;
+const elDapSbCountry = document.getElementById("dap-sb-country") as HTMLSelectElement;
+const elDapName = document.getElementById("dap-name") as HTMLInputElement;
+const elDapCancel = document.getElementById("dap-cancel") as HTMLButtonElement;
+const elDapSubmit = document.getElementById("dap-submit") as HTMLButtonElement;
+const elDapStatus = document.getElementById("dap-status") as HTMLParagraphElement;
+const elDapEmptyCountriesHint = document.getElementById("dap-empty-countries-hint") as HTMLParagraphElement | null;
+const elDapNewCountryName = document.getElementById("dap-new-country-name") as HTMLInputElement;
+const elDapAddCountry = document.getElementById("dap-add-country") as HTMLButtonElement;
 
 applySettingsRouteOnLoad();
 const elPlayerContainer = $("#player-container") as HTMLElement;
@@ -81,10 +105,17 @@ let uiTab: UiTab = "live";
 let uiShell: UiShell = "packages";
 /** When in live TV content view, which admin package (grid card) is open. */
 let uiAdminPackageId: string | null = null;
-/** Selected country from `admin_countries` (database). */
+/** Selected country in the header (inferred from catalogue keys, e.g. canonical id). */
 let selectedAdminCountryId: string | null = null;
+/** Supabase `admin_countries` / `admin_packages` — merged into the grid for admins. */
+let dbAdminCountries: AdminCountry[] = [];
+let dbAdminPackages: AdminPackage[] = [];
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
+/** When `"0"`, hide + / Supabase delete in the grid (admin session only). Default = visible. */
+const ADMIN_GRID_TOOLS_KEY = "velora_admin_grid_tools";
+/** Same id as `providerLayout` « Autres » bucket — keep last in the list. */
+const OTHER_COUNTRY_ID = "country__other";
 
 function resolvedIconUrl(raw: string | undefined, base: string): string | null {
   const s = raw?.trim();
@@ -403,13 +434,35 @@ function renderPackageChannelList(): void {
   if (filtered.length === 0) {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
-    empty.textContent = "Aucune chaîne dans cette catégorie.";
+    empty.textContent =
+      uiAdminPackageId && isLikelyUuid(uiAdminPackageId)
+        ? "Ce bouquet Supabase n’a pas encore de catégories / règles liées au catalogue fournisseur dans la base."
+        : "Aucune chaîne dans cette catégorie.";
     elDynamicList.appendChild(empty);
   }
 }
 
+/** Provider-inferred countries plus Supabase-only rows (deduped by display name). */
+function countryRowsForSelect(): AdminCountry[] {
+  const provider = adminConfig.countries;
+  const seen = new Set(provider.map((c) => c.name.trim().toLowerCase()));
+  const out: AdminCountry[] = [...provider];
+  for (const c of dbAdminCountries) {
+    const k = c.name.trim().toLowerCase();
+    if (seen.has(k)) continue;
+    out.push(c);
+    seen.add(k);
+  }
+  out.sort((a, b) => {
+    if (a.id === OTHER_COUNTRY_ID) return 1;
+    if (b.id === OTHER_COUNTRY_ID) return -1;
+    return a.name.localeCompare(b.name, "fr");
+  });
+  return out;
+}
+
 function ensureSelectedCountry(): void {
-  const countries = adminConfig.countries;
+  const countries = countryRowsForSelect();
   if (countries.length === 0) {
     selectedAdminCountryId = null;
     return;
@@ -432,7 +485,7 @@ function ensureSelectedCountry(): void {
 
 function populateCountrySelectFromAdmin(): void {
   elCountrySelect.innerHTML = "";
-  const countries = adminConfig.countries;
+  const countries = countryRowsForSelect();
   if (countries.length === 0) {
     const o = document.createElement("option");
     o.value = "";
@@ -445,7 +498,7 @@ function populateCountrySelectFromAdmin(): void {
   }
   elCountrySelect.disabled = false;
   ensureSelectedCountry();
-  for (const c of [...countries].sort((a, b) => a.name.localeCompare(b.name, "fr"))) {
+  for (const c of countries) {
     const o = document.createElement("option");
     o.value = c.id;
     o.textContent = c.name;
@@ -454,13 +507,46 @@ function populateCountrySelectFromAdmin(): void {
   }
 }
 
+function readAdminGridToolsEnabled(): boolean {
+  if (!isAdminSession()) return false;
+  try {
+    if (localStorage.getItem(ADMIN_GRID_TOOLS_KEY) === "0") return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function syncAdminGridToolsToggleFromStorage(): void {
+  if (!elToggleAdminUi) return;
+  const on = readAdminGridToolsEnabled();
+  elToggleAdminUi.checked = on;
+  elToggleAdminUi.setAttribute("aria-checked", on ? "true" : "false");
+}
+
 function syncAdminSettingsButton(): void {
-  if (!elBtnSettings) return;
-  elBtnSettings.classList.toggle("hidden", !isAdminSession());
+  elBtnSettings?.classList.toggle("hidden", !isAdminSession());
+  elVelAdminToolsWrap?.classList.toggle("hidden", !isAdminSession());
+  if (isAdminSession()) syncAdminGridToolsToggleFromStorage();
 }
 
 elBtnSettings?.addEventListener("click", () => {
   openSettingsPage();
+});
+
+elToggleAdminUi?.addEventListener("change", () => {
+  try {
+    localStorage.setItem(ADMIN_GRID_TOOLS_KEY, elToggleAdminUi.checked ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  elToggleAdminUi.setAttribute("aria-checked", elToggleAdminUi.checked ? "true" : "false");
+  if (!elToggleAdminUi.checked && elDialogAddPkg.open) {
+    elDialogAddPkg.close();
+  }
+  if (state && uiShell === "packages" && uiTab === "live") {
+    renderPackagesGrid();
+  }
 });
 
 window.addEventListener("popstate", () => {
@@ -469,6 +555,9 @@ window.addEventListener("popstate", () => {
 
 window.addEventListener("velora-admin-session-changed", () => {
   syncAdminSettingsButton();
+  void refreshSupabaseHierarchy().then(() => {
+    if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+  });
 });
 
 window.addEventListener("velora-settings-closed", () => {
@@ -477,6 +566,8 @@ window.addEventListener("velora-settings-closed", () => {
       await fetchAndApplyCanonicalCountries();
       await fetchAndApplyChannelNamePrefixes();
       await fetchAndApplyChannelHideNeedles();
+      await refreshSupabaseHierarchy();
+      if (uiShell === "packages" && uiTab === "live") renderPackagesGrid();
     })();
   }
   if (envAutoConnectConfigured() && !state) {
@@ -485,11 +576,91 @@ window.addEventListener("velora-settings-closed", () => {
   }
 });
 
+/** Live categories from the provider for the current header selection (catalogue `country_id`). */
 function packagesForSelectedCountry(): AdminPackage[] {
   if (!selectedAdminCountryId) return [];
+  if (isLikelyUuid(selectedAdminCountryId)) {
+    /* Canonical pays from Supabase use UUID ids — same shape as admin_countries. */
+    if (adminConfig.countries.some((c) => c.id === selectedAdminCountryId)) {
+      return adminConfig.packages
+        .filter((p) => p.country_id === selectedAdminCountryId)
+        .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    }
+    const dbC = dbAdminCountries.find((c) => c.id === selectedAdminCountryId);
+    if (!dbC) return [];
+    const key = normalizeCountryKey(dbC.name);
+    if (!key) return [];
+    const prov = adminConfig.countries.find((c) => normalizeCountryKey(c.name) === key);
+    if (!prov) return [];
+    return adminConfig.packages
+      .filter((p) => p.country_id === prov.id)
+      .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  }
   return adminConfig.packages
     .filter((p) => p.country_id === selectedAdminCountryId)
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
+async function refreshSupabaseHierarchy(): Promise<void> {
+  const sb = getSupabaseClient();
+  if (!sb) {
+    dbAdminCountries = [];
+    dbAdminPackages = [];
+    populateCountrySelectFromAdmin();
+    return;
+  }
+  try {
+    const [countries, packages] = await Promise.all([
+      fetchDbAdminCountries(sb),
+      fetchDbAdminPackages(sb),
+    ]);
+    dbAdminCountries = countries;
+    dbAdminPackages = packages;
+  } catch {
+    dbAdminCountries = [];
+    dbAdminPackages = [];
+  }
+  populateCountrySelectFromAdmin();
+}
+
+function matchedDbCountryIdForSelection(): string | null {
+  if (!selectedAdminCountryId) return null;
+  if (isLikelyUuid(selectedAdminCountryId)) {
+    return dbAdminCountries.some((c) => c.id === selectedAdminCountryId)
+      ? selectedAdminCountryId
+      : null;
+  }
+  const c = adminConfig.countries.find((x) => x.id === selectedAdminCountryId);
+  if (!c) return null;
+  return matchDbCountryIdByDisplayName(c.name, dbAdminCountries);
+}
+
+function mergedPackagesForGrid(): AdminPackage[] {
+  const provider = packagesForSelectedCountry();
+  const sid = matchedDbCountryIdForSelection();
+  const fromDb = sid ? dbAdminPackages.filter((p) => p.country_id === sid) : [];
+  return [...fromDb, ...provider].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
+function findPackageById(packageId: string): AdminPackage | undefined {
+  return adminConfig.packages.find((p) => p.id === packageId) ?? dbAdminPackages.find((p) => p.id === packageId);
+}
+
+function appendAddPackageCard(): void {
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "vel-package-card vel-package-card--add";
+  add.setAttribute("aria-label", "Nouveau package Supabase");
+  const plus = document.createElement("span");
+  plus.className = "vel-package-card__add-plus";
+  plus.setAttribute("aria-hidden", "true");
+  plus.textContent = "+";
+  const title = document.createElement("span");
+  title.className = "vel-package-card__title";
+  title.textContent = "Nouveau package";
+  add.append(plus, title);
+  add.addEventListener("click", () => openAddPackageDialog());
+  elPackagesView.appendChild(add);
 }
 
 function renderPackagesGrid(): void {
@@ -497,12 +668,12 @@ function renderPackagesGrid(): void {
   const st = state;
   if (!st) return;
 
-  if (adminConfig.countries.length === 0) {
+  if (countryRowsForSelect().length === 0) {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
     empty.style.gridColumn = "1 / -1";
     empty.textContent =
-      "Aucun pays reconnu dans les titres. Vérifiez le format (ex. « |AM| Brazil ») ou regroupez dans « Autres ».";
+      "Aucun pays (ni dans le catalogue, ni dans Supabase). Connectez-vous ou ajoutez des pays via l’admin Supabase / le dialogue « + ».";
     elPackagesView.appendChild(empty);
     return;
   }
@@ -516,12 +687,67 @@ function renderPackagesGrid(): void {
     return;
   }
 
-  const pkgs = packagesForSelectedCountry();
+  const showAdminGridTools =
+    isAdminSession() && Boolean(getSupabaseClient()) && readAdminGridToolsEnabled();
+  if (showAdminGridTools) appendAddPackageCard();
+
+  const pkgs = mergedPackagesForGrid();
   for (const pkg of pkgs) {
+    const isDb = isLikelyUuid(pkg.id);
     const matched = streamsForProviderCategory(pkg.id);
-    const firstIcon = matched
-      .map((s) => resolvedIconUrl(s.stream_icon, st.base))
-      .find(Boolean);
+    const firstIcon = !isDb
+      ? matched
+          .map((s) => resolvedIconUrl(s.stream_icon, st.base))
+          .find(Boolean)
+      : null;
+
+    if (isDb) {
+      const card = document.createElement("div");
+      card.className = "vel-package-card vel-package-card--db";
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.dataset.packageId = pkg.id;
+      card.setAttribute("aria-label", pkg.name);
+
+      if (showAdminGridTools) {
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "admin-pkg-del-sb";
+        del.dataset.packageId = pkg.id;
+        del.setAttribute("aria-label", `Supprimer ${pkg.name}`);
+        del.textContent = "×";
+        del.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          void deleteDbPackageById(pkg.id);
+        });
+        card.appendChild(del);
+      }
+
+      const em = document.createElement("span");
+      em.className = "vel-package-card__emoji";
+      em.textContent = "📦";
+      em.setAttribute("aria-hidden", "true");
+      card.appendChild(em);
+
+      const title = document.createElement("span");
+      title.className = "vel-package-card__title";
+      title.textContent = pkg.name;
+      card.appendChild(title);
+
+      card.addEventListener("click", (ev) => {
+        if ((ev.target as HTMLElement).closest(".admin-pkg-del-sb")) return;
+        openAdminPackage(pkg.id);
+      });
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          openAdminPackage(pkg.id);
+        }
+      });
+      elPackagesView.appendChild(card);
+      continue;
+    }
 
     const card = document.createElement("button");
     card.type = "button";
@@ -564,14 +790,15 @@ function renderPackagesGrid(): void {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
     empty.style.gridColumn = "1 / -1";
-    empty.textContent = "Aucune catégorie live pour ce pays dans le catalogue fournisseur.";
+    empty.textContent =
+      "Aucune catégorie live pour ce pays dans le catalogue fournisseur. Essayez un autre pays ou « Autres ».";
     elPackagesView.appendChild(empty);
   }
 }
 
 function openAdminPackage(packageId: string): void {
   if (!state) return;
-  const pkg = adminConfig.packages.find((p) => p.id === packageId);
+  const pkg = findPackageById(packageId);
   if (!pkg) return;
   uiShell = "content";
   uiTab = "live";
@@ -600,6 +827,145 @@ function goHome(): void {
   selectedPillId = "all";
   if (state) renderPackagesGrid();
 }
+
+async function deleteDbPackageById(packageId: string): Promise<void> {
+  if (!isLikelyUuid(packageId)) return;
+  if (
+    !window.confirm("Supprimer ce package Supabase ? Les catégories liées seront supprimées (cascade).")
+  ) {
+    return;
+  }
+  const sb = getSupabaseClient();
+  if (!sb) return;
+  const { error } = await sb.from("admin_packages").delete().eq("id", packageId);
+  if (error) {
+    setLoginStatus(error.message, true);
+    return;
+  }
+  await refreshSupabaseHierarchy();
+  if (state && uiShell === "packages" && uiTab === "live") {
+    renderPackagesGrid();
+  }
+}
+
+function populateAddPackageDialogCountries(): void {
+  elDapSbCountry.innerHTML = "";
+  if (dbAdminCountries.length === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "— Ajoutez un pays ci-dessus —";
+    o.disabled = true;
+    o.selected = true;
+    elDapSbCountry.appendChild(o);
+    elDapSbCountry.disabled = true;
+    return;
+  }
+  elDapSbCountry.disabled = false;
+  for (const c of dbAdminCountries) {
+    const o = document.createElement("option");
+    o.value = c.id;
+    o.textContent = c.name;
+    elDapSbCountry.appendChild(o);
+  }
+}
+
+function openAddPackageDialog(): void {
+  const sb = getSupabaseClient();
+  if (!isAdminSession() || !readAdminGridToolsEnabled() || !sb) return;
+  elDapStatus.textContent = "";
+  elDapStatus.classList.remove("error");
+  elDapNewCountryName.value = "";
+  populateAddPackageDialogCountries();
+  elDapEmptyCountriesHint?.classList.toggle("hidden", dbAdminCountries.length > 0);
+  const match = matchedDbCountryIdForSelection();
+  if (match && [...elDapSbCountry.options].some((o) => o.value === match)) {
+    elDapSbCountry.value = match;
+  } else if (elDapSbCountry.options.length && !elDapSbCountry.disabled) {
+    elDapSbCountry.selectedIndex = 0;
+  }
+  elDapName.value = "";
+  elDialogAddPkg.showModal();
+  queueMicrotask(() => {
+    if (dbAdminCountries.length === 0) elDapNewCountryName.focus();
+    else elDapName.focus();
+  });
+}
+
+function closeAddPackageDialog(): void {
+  elDialogAddPkg.close();
+}
+
+elDapCancel.addEventListener("click", () => closeAddPackageDialog());
+
+elDapAddCountry.addEventListener("click", () => {
+  void (async () => {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+    const name = elDapNewCountryName.value.trim();
+    elDapStatus.textContent = "";
+    elDapStatus.classList.remove("error");
+    if (!name) {
+      elDapStatus.textContent = "Saisissez un nom de pays.";
+      elDapStatus.classList.add("error");
+      return;
+    }
+    elDapAddCountry.disabled = true;
+    const { data, error } = await sb.from("admin_countries").insert({ name }).select("id, name").single();
+    elDapAddCountry.disabled = false;
+    if (error) {
+      elDapStatus.textContent = error.message;
+      elDapStatus.classList.add("error");
+      return;
+    }
+    elDapNewCountryName.value = "";
+    await refreshSupabaseHierarchy();
+    populateAddPackageDialogCountries();
+    elDapEmptyCountriesHint?.classList.add("hidden");
+    const id = data && typeof data === "object" && "id" in data ? String((data as { id: string }).id) : "";
+    if (id && [...elDapSbCountry.options].some((o) => o.value === id)) {
+      elDapSbCountry.value = id;
+    }
+    elDapStatus.textContent = "Pays ajouté. Saisissez le nom du package puis « Ajouter ».";
+    elDapName.focus();
+  })();
+});
+
+elDapSubmit.addEventListener("click", () => {
+  void (async () => {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+    const countryId = elDapSbCountry.value?.trim();
+    const name = elDapName.value.trim();
+    elDapStatus.textContent = "";
+    elDapStatus.classList.remove("error");
+    if (!countryId) {
+      elDapStatus.textContent = "Choisissez un pays Supabase.";
+      elDapStatus.classList.add("error");
+      return;
+    }
+    if (!name) {
+      elDapStatus.textContent = "Saisissez un nom.";
+      elDapStatus.classList.add("error");
+      return;
+    }
+    elDapSubmit.disabled = true;
+    const { error } = await sb.from("admin_packages").insert({ country_id: countryId, name });
+    elDapSubmit.disabled = false;
+    if (error) {
+      const dup = /unique|duplicate/i.test(error.message);
+      elDapStatus.textContent = dup
+        ? "Un package avec ce nom existe déjà pour ce pays."
+        : error.message;
+      elDapStatus.classList.add("error");
+      return;
+    }
+    closeAddPackageDialog();
+    await refreshSupabaseHierarchy();
+    if (state && uiShell === "packages" && uiTab === "live") {
+      renderPackagesGrid();
+    }
+  })();
+});
 
 function showVodPlaceholder(kind: "movies" | "series"): void {
   uiShell = "content";
@@ -699,7 +1065,7 @@ async function connect(): Promise<void> {
     await fetchAndApplyChannelNamePrefixes();
     await fetchAndApplyChannelHideNeedles();
     adminConfig = buildProviderAdminConfig(nodecast.categories, streamsByCat);
-    populateCountrySelectFromAdmin();
+    await refreshSupabaseHierarchy();
 
     state = {
       mode,
@@ -744,6 +1110,8 @@ function disconnect(): void {
   setChannelNamePrefixesFromDatabase(null);
   setChannelHideNeedlesFromDatabase(null);
   adminConfig = { ...EMPTY_ADMIN_CONFIG };
+  dbAdminCountries = [];
+  dbAdminPackages = [];
   populateCountrySelectFromAdmin();
   state = null;
   activeStreamId = null;
@@ -787,8 +1155,8 @@ function onCountryChange(): void {
   if (!state) return;
 
   if (uiShell === "content" && uiTab === "live" && uiAdminPackageId) {
-    const pkg = adminConfig.packages.find((p) => p.id === uiAdminPackageId);
-    if (!pkg || pkg.country_id !== selectedAdminCountryId) {
+    const merged = mergedPackagesForGrid();
+    if (!merged.some((p) => p.id === uiAdminPackageId)) {
       goHome();
       return;
     }
@@ -849,8 +1217,7 @@ if (envAutoConnectConfigured() && !isSettingsPageOpen()) {
   void connect();
 } else if (!isSettingsPageOpen()) {
   void fetchAndApplyCanonicalCountries().catch(() => {});
-  populateCountrySelectFromAdmin();
-  syncAdminSettingsButton();
+  void refreshSupabaseHierarchy().then(() => syncAdminSettingsButton());
 } else {
   syncAdminSettingsButton();
 }
