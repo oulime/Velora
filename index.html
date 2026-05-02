@@ -74,12 +74,9 @@
             <button type="button" id="btn-close-player" class="close-player" aria-label="Fermer le lecteur">
               ✕
             </button>
-            <video id="video" controls playsinline></video>
-            <div class="player-overlay">
-              <span class="play-icon" aria-hidden="true">▶</span>
-              <span id="player-status">En lecture</span>
-            </div>
+            <video id="video" playsinline></video>
           </div>
+          <div id="now-playing" class="player-now-playing vel-now-playing" role="status"></div>
         </div>
 
         <div class="vel-body">
@@ -116,8 +113,6 @@
             </div>
             <div class="item-list" id="dynamic-list"></div>
           </div>
-
-          <div id="now-playing" class="now-playing vel-now-playing" role="status"></div>
         </div>
       </main>
     </div>

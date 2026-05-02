@@ -1,4 +1,6 @@
 import Hls from "hls.js";
+import Plyr from "plyr";
+import "plyr/dist/plyr.css";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   assignmentCategoryIdForStreamName,
@@ -46,7 +48,6 @@ const elBtnLogout = $("#btn-logout") as HTMLButtonElement;
 const elCountrySelect = $("#country-select") as HTMLSelectElement;
 const elPlayerContainer = $("#player-container") as HTMLElement;
 const elBtnClosePlayer = $("#btn-close-player") as HTMLButtonElement;
-const elPlayerStatus = $("#player-status") as HTMLSpanElement;
 const elMainTabs = $("#main-tabs") as HTMLElement;
 const elPackagesView = $("#packages-view") as HTMLDivElement;
 const elContentView = $("#content-view") as HTMLElement;
@@ -152,7 +153,26 @@ let state: {
 } | null = null;
 
 let hls: Hls | null = null;
+let plyrInstance: Plyr | null = null;
 let activeStreamId: number | null = null;
+
+/** Live IPTV: no scrub bar or speed menu (not meaningful for live HLS). */
+const PLYR_OPTIONS: Plyr.Options = {
+  controls: [
+    "play-large",
+    "play",
+    "current-time",
+    "mute",
+    "volume",
+    "pip",
+    "fullscreen",
+  ],
+  displayDuration: false,
+  fullscreen: { enabled: true, iosNative: true },
+  hideControls: true,
+  clickToPlay: true,
+  tooltips: { controls: true, seek: false },
+};
 
 function themeKeyForLabel(name: string): string {
   const n = name.toLowerCase();
@@ -186,26 +206,40 @@ function destroyPlayer(): void {
     hls.destroy();
     hls = null;
   }
+  if (plyrInstance) {
+    plyrInstance.destroy();
+    plyrInstance = null;
+  }
   elVideo.removeAttribute("src");
+  elVideo.removeAttribute("title");
   elVideo.load();
-  elPlayerStatus.textContent = "—";
+  elNowPlaying.textContent = "";
   showPlayerChrome(false);
+}
+
+function initPlyr(): void {
+  if (plyrInstance) {
+    plyrInstance.destroy();
+    plyrInstance = null;
+  }
+  plyrInstance = new Plyr(elVideo, PLYR_OPTIONS);
 }
 
 function playUrl(url: string, label: string): void {
   destroyPlayer();
   const proxied = proxiedUrl(url);
-  elPlayerStatus.textContent = label;
-  elNowPlaying.innerHTML = `Lecture : <strong>${escapeHtml(label)}</strong>`;
+  elNowPlaying.innerHTML = `<strong>${escapeHtml(label)}</strong>`;
   showPlayerChrome(true);
 
   if (elVideo.canPlayType("application/vnd.apple.mpegurl")) {
     elVideo.src = proxied;
+    initPlyr();
     void elVideo.play().catch(() => {});
     return;
   }
 
   if (Hls.isSupported()) {
+    initPlyr();
     hls = new Hls({
       enableWorker: true,
       lowLatencyMode: false,
@@ -217,8 +251,7 @@ function playUrl(url: string, label: string): void {
     });
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (data.fatal) {
-        elPlayerStatus.textContent = "Erreur lecture";
-        elNowPlaying.innerHTML = `<span class="error">Erreur : ${escapeHtml(
+        elNowPlaying.innerHTML = `<span class="error">Erreur lecture : ${escapeHtml(
           data.type
         )} / ${escapeHtml(String(data.details))}</span>`;
       }
@@ -484,7 +517,6 @@ function renderPackageChannelList(): void {
         el.classList.toggle("selected", (el as HTMLElement).dataset.streamId === String(s.stream_id))
       );
       void playStreamByMode(s);
-      elPlayerStatus.textContent = displayChannelName(s.name);
       showPlayerChrome(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
@@ -846,6 +878,7 @@ elBtnBackHome.addEventListener("click", () => {
 
 elBtnClosePlayer.addEventListener("click", () => {
   elVideo.pause();
+  elNowPlaying.textContent = "";
   showPlayerChrome(false);
 });
 

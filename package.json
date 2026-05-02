@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
-    "hls.js": "^1.5.7"
+    "hls.js": "^1.5.7",
+    "plyr": "^3.8.4"
   }
 }
