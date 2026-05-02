@@ -40,6 +40,12 @@ body {
   overflow-x: hidden;
 }
 
+/* Set by Vite when VITE_NODECAST_URL + VITE_NODECAST_USERNAME exist at dev/build time (no login flash). */
+body.vite-autoconnect .header--login-only,
+body.vite-autoconnect .login-panel {
+  display: none !important;
+}
+
 .app {
   min-height: 100%;
   display: flex;
@@ -1472,19 +1478,24 @@ a.topbar__admin-link {
   flex-shrink: 0;
 }
 
-.vel-admin-link {
+.vel-settings-btn {
   font-size: 0.72rem;
   padding: 0.35rem 0.55rem;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
-  color: var(--vel-muted);
-  text-decoration: none;
+  color: var(--vel-muted, #8e8c9e);
+  cursor: pointer;
+  font-family: Inter, var(--font);
 }
 
-.vel-admin-link:hover {
-  color: var(--vel-text);
-  border-color: var(--vel-primary);
+.vel-settings-btn:hover {
+  color: var(--vel-text, #fff);
+  border-color: var(--vel-primary, #8a2be2);
+}
+
+.vel-settings-btn.hidden {
+  display: none !important;
 }
 
 .vel-logout {
@@ -1502,15 +1513,29 @@ a.topbar__admin-link {
 }
 
 .country-select {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fff;
+  /* Solid surface + dark color-scheme so the native dropdown isn’t light-on-light (Windows/Chrome). */
+  background: var(--vel-surface);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--vel-text);
+  color-scheme: dark;
   padding: 0.45rem 0.75rem;
   border-radius: 20px;
   font-size: 0.95rem;
   outline: none;
   cursor: pointer;
   font-family: Inter, var(--font);
+  max-width: min(12rem, 42vw);
+}
+
+.country-select:hover,
+.country-select:focus {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.country-select option,
+.country-select optgroup {
+  background-color: #1a1726;
+  color: #f2f0f7;
 }
 
 .player-container {
@@ -1659,8 +1684,9 @@ a.topbar__admin-link {
 }
 
 .vel-package-card img {
-  width: 86%;
-  height: 86%;
+  width: 78%;
+  max-height: 52%;
+  height: auto;
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -1668,6 +1694,22 @@ a.topbar__admin-link {
 .vel-package-card__emoji {
   font-size: 2.75rem;
   line-height: 1;
+}
+
+.vel-package-card__title {
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 #content-view {
@@ -2046,5 +2088,157 @@ a.topbar__admin-link {
   .grid.vel-packages {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+
+/* ——— Pays admin (URL `?settings=1`) ——— */
+.settings-shell.hidden {
+  display: none !important;
+}
+
+.countries-admin-back--btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.countries-admin-page {
+  padding: 1rem 1.25rem 2.5rem;
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.countries-admin-head h1 {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 1.2rem;
+}
+
+.countries-admin-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.countries-admin-back {
+  font-size: 0.85rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.countries-admin-back:hover {
+  text-decoration: underline;
+}
+
+.countries-admin-quit {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.countries-admin-quit:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.countries-admin-intro {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.countries-admin-main .panel {
+  margin-bottom: 1rem;
+}
+
+.countries-admin-main h2 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+}
+
+.countries-admin-table-wrap {
+  overflow-x: auto;
+}
+
+.countries-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.countries-admin-table th,
+.countries-admin-table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.countries-admin-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.countries-admin-del {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.countries-admin-del:hover {
+  border-color: var(--danger);
+}
+
+.countries-admin-edit {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.countries-admin-edit:hover {
+  border-color: var(--accent, #6366f1);
+  color: var(--accent, #6366f1);
+}
+
+.countries-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.countries-admin-cancel {
+  font-size: 0.88rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.countries-admin-cancel:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.countries-admin-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 

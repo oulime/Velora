@@ -1,4 +1,4 @@
-/** Shared Nodecast catalog loading + stream URL resolution (player + admin). */
+/** Shared Nodecast catalog loading + stream URL resolution. */
 
 export type LiveCategory = {
   category_id: string;

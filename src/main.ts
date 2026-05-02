@@ -1,19 +1,23 @@
 import Hls from "hls.js";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isAdminSession, tryConsumeAdminAccessFromUrl } from "./adminSession";
 import {
-  assignmentCategoryIdForStreamName,
   displayChannelName,
+  setChannelHideNeedlesFromDatabase,
+  setChannelNamePrefixesFromDatabase,
+  shouldHideChannelByName,
 } from "./assignmentMatch";
 import {
-  type AdminCategory,
-  type AdminConfig,
-  type AdminCountry,
-  type AdminPackage,
-  EMPTY_ADMIN_CONFIG,
-  normalizePackage,
-  readAdminConfigFromLocalStorage,
-} from "./adminHierarchyConfig";
+  applySettingsRouteOnLoad,
+  isSettingsPageOpen,
+  openSettingsPage,
+  syncSettingsFromUrl,
+} from "./settingsPage";
+import { type AdminConfig, type AdminPackage, EMPTY_ADMIN_CONFIG } from "./adminHierarchyConfig";
 import { THEMES, presetForPackageName } from "./packageThemePresets";
+import { fetchAndApplyCanonicalCountries } from "./canonicalCountriesSupabase";
+import { fetchAndApplyChannelNamePrefixes } from "./channelNamePrefixesSupabase";
+import { fetchAndApplyChannelHideNeedles } from "./channelHideNeedlesSupabase";
+import { buildProviderAdminConfig } from "./providerLayout";
 import {
   type LiveStream,
   tryNodecastLoginAndLoad,
@@ -22,6 +26,8 @@ import {
   normalizeServerInput,
   sameOrigin,
 } from "./nodecastCatalog";
+
+tryConsumeAdminAccessFromUrl();
 
 type ServerInfo = {
   url: string;
@@ -44,7 +50,11 @@ const elCatPillsWrap = $("#cat-pills-wrap") as HTMLElement;
 const elVideo = $("#video") as HTMLVideoElement;
 const elNowPlaying = $("#now-playing") as HTMLDivElement;
 const elBtnLogout = $("#btn-logout") as HTMLButtonElement;
+const elBtnSettings = $("#btn-settings") as HTMLButtonElement | null;
+const elHeaderLoginOnly = document.querySelector(".header--login-only") as HTMLElement | null;
 const elCountrySelect = $("#country-select") as HTMLSelectElement;
+
+applySettingsRouteOnLoad();
 const elPlayerContainer = $("#player-container") as HTMLElement;
 const elMainTabs = $("#main-tabs") as HTMLElement;
 const elPackagesView = $("#packages-view") as HTMLDivElement;
@@ -75,12 +85,6 @@ let uiAdminPackageId: string | null = null;
 let selectedAdminCountryId: string | null = null;
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
-
-const supabaseUrl = import.meta.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env
-  .NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY as string | undefined;
-const supabase: SupabaseClient | null =
-  supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 function resolvedIconUrl(raw: string | undefined, base: string): string | null {
   const s = raw?.trim();
@@ -245,6 +249,34 @@ function setLoginStatus(msg: string, isError = false): void {
   elLoginStatus.classList.toggle("error", isError);
 }
 
+function envAutoConnectConfigured(): boolean {
+  const u = import.meta.env.VITE_NODECAST_URL?.trim();
+  const n = import.meta.env.VITE_NODECAST_USERNAME?.trim();
+  return Boolean(u && n);
+}
+
+function applyNodecastEnvDefaults(): void {
+  if (!envAutoConnectConfigured()) return;
+  elServer.value = import.meta.env.VITE_NODECAST_URL!.trim();
+  elUser.value = import.meta.env.VITE_NODECAST_USERNAME!.trim();
+  elPass.value =
+    typeof import.meta.env.VITE_NODECAST_PASSWORD === "string"
+      ? import.meta.env.VITE_NODECAST_PASSWORD
+      : "";
+}
+
+/** Skip the login card: show main shell with a loading line until `connect()` finishes. */
+function prepareEnvAutoconnectUi(): void {
+  elHeaderLoginOnly?.classList.add("hidden");
+  elLoginPanel.classList.add("hidden");
+  elMain.classList.remove("hidden");
+  elMainTabs.classList.remove("hidden");
+  elContentView.classList.add("hidden");
+  elPackagesView.classList.remove("hidden");
+  elPackagesView.innerHTML =
+    '<div class="vel-empty-msg" style="grid-column: 1 / -1; text-align: center; padding: 2rem 1rem">Connexion au catalogue…</div>';
+}
+
 function syncPillDefsForPackage(packageId: string): void {
   const leaves = adminConfig.categories
     .filter((c) => c.package_id === packageId)
@@ -258,136 +290,15 @@ function syncPillDefsForPackage(packageId: string): void {
   }
 }
 
-function normalizeAdminId(id: string): string {
-  return id.trim().toLowerCase();
-}
-
-/** Leaf category ids for this package (normalized for stable UUID compares). */
-function leafCategoryIdSetForPackage(packageId: string): Set<string> {
-  const pid = normalizeAdminId(packageId);
-  return new Set(
-    adminConfig.categories
-      .filter((c) => normalizeAdminId(c.package_id) === pid)
-      .map((c) => normalizeAdminId(c.id))
-  );
-}
-
-/** Channel rules that target a leaf category inside this package only. */
-function assignmentsForPackageLeaves(leafIds: Set<string>): AdminConfig["assignments"] {
-  return adminConfig.assignments.filter((a) => leafIds.has(normalizeAdminId(a.category_id)));
-}
-
-/**
- * Which leaf category this stream belongs to **for this bouquet only**, using rules
- * scoped to that package. Avoids another package’s rule matching the same name first
- * and hiding channels here.
- */
-function ruleCategoryForStreamInPackage(streamName: string, packageId: string): string | null {
-  const leafIds = leafCategoryIdSetForPackage(packageId);
-  if (leafIds.size === 0) return null;
-  const scoped = assignmentsForPackageLeaves(leafIds);
-  const aid = assignmentCategoryIdForStreamName(streamName, scoped);
-  if (aid == null) return null;
-  return leafIds.has(normalizeAdminId(aid)) ? aid : null;
-}
-
-function isHiddenByAdminFilter(name: string): boolean {
-  const n = name.toLowerCase();
-  return adminConfig.hiddenFilters.some((f) => {
-    const needle = f.needle.trim().toLowerCase();
-    return needle && n.includes(needle);
-  });
-}
-
-function loadAdminFromLocalStorage(): void {
-  adminConfig = readAdminConfigFromLocalStorage();
-}
-
-async function loadAdminConfig(): Promise<void> {
-  if (!supabase) {
-    loadAdminFromLocalStorage();
-    return;
-  }
-  try {
-    const [ctryRes, pkgRes, catRes, rulesRes, filtersRes] = await Promise.all([
-      supabase.from("admin_countries").select("id,name").order("name", { ascending: true }),
-      supabase
-        .from("admin_packages")
-        .select(
-          "id,country_id,name,theme_bg,theme_surface,theme_primary,theme_glow,theme_back"
-        )
-        .order("name", { ascending: true }),
-      supabase
-        .from("admin_categories")
-        .select("id,package_id,name")
-        .order("name", { ascending: true }),
-      supabase
-        .from("admin_channel_rules")
-        .select("id,match_text,category_id")
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("admin_hidden_filters")
-        .select("id,needle")
-        .order("created_at", { ascending: true }),
-    ]);
-    if (
-      ctryRes.error ||
-      pkgRes.error ||
-      catRes.error ||
-      rulesRes.error ||
-      filtersRes.error
-    ) {
-      throw (
-        ctryRes.error ||
-        pkgRes.error ||
-        catRes.error ||
-        rulesRes.error ||
-        filtersRes.error
-      );
-    }
-    adminConfig = {
-      countries: (ctryRes.data ?? []) as AdminCountry[],
-      packages: (pkgRes.data ?? [])
-        .map((row) => normalizePackage(row))
-        .filter((p): p is AdminPackage => p != null),
-      categories: (catRes.data ?? []) as AdminCategory[],
-      assignments: (rulesRes.data ?? []) as AdminConfig["assignments"],
-      hiddenFilters: (filtersRes.data ?? []) as AdminConfig["hiddenFilters"],
-    };
-  } catch {
-    loadAdminFromLocalStorage();
-  }
-}
-
-function allStreamsDeduped(streamsByCat: Map<string, LiveStream[]>): LiveStream[] {
-  const seen = new Map<number, LiveStream>();
-  for (const list of streamsByCat.values()) {
-    for (const s of list) {
-      if (!seen.has(s.stream_id)) seen.set(s.stream_id, s);
-    }
-  }
-  return [...seen.values()];
-}
-
-/** Streams from the provider that are assigned (rules) to a leaf category inside this package. */
-function streamsMatchedInPackage(packageId: string): LiveStream[] {
+/** Streams for the opened grid card: `packageId` is the provider live `category_id`. */
+function streamsForProviderCategory(packageId: string): LiveStream[] {
   if (!state) return [];
-  const leafIds = leafCategoryIdSetForPackage(packageId);
-  if (leafIds.size === 0) return [];
-  const pool = allStreamsDeduped(state.streamsByCatAll).filter((s) => !isHiddenByAdminFilter(s.name));
-  return pool.filter((s) => ruleCategoryForStreamInPackage(s.name, packageId) != null);
+  return state.streamsByCatAll.get(packageId) ?? [];
 }
 
-function streamsAfterPill(base: LiveStream[], pillId: PillId, packageId: string): LiveStream[] {
+function streamsAfterPill(base: LiveStream[], pillId: PillId): LiveStream[] {
   if (pillId === "all") return base;
-  if (pillId.startsWith("custom:")) {
-    const customId = pillId.slice("custom:".length);
-    const want = normalizeAdminId(customId);
-    return base.filter(
-      (s) => normalizeAdminId(ruleCategoryForStreamInPackage(s.name, packageId) ?? "") === want
-    );
-  }
-  return [];
+  return base;
 }
 
 function updatePillsVisibility(): void {
@@ -430,8 +341,8 @@ function renderCategoryPills(): void {
 
 function renderPackageChannelList(): void {
   if (!state || uiAdminPackageId == null) return;
-  const base = streamsMatchedInPackage(uiAdminPackageId);
-  const filtered = streamsAfterPill(base, selectedPillId, uiAdminPackageId);
+  const base = streamsForProviderCategory(uiAdminPackageId);
+  const filtered = streamsAfterPill(base, selectedPillId).filter((s) => !shouldHideChannelByName(s.name));
 
   elDynamicList.innerHTML = "";
 
@@ -492,14 +403,7 @@ function renderPackageChannelList(): void {
   if (filtered.length === 0) {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
-    const leaves = leafCategoryIdSetForPackage(uiAdminPackageId).size;
-    const rulesHere = assignmentsForPackageLeaves(leafCategoryIdSetForPackage(uiAdminPackageId)).length;
-    empty.textContent =
-      leaves === 0
-        ? "Aucune catégorie dans ce bouquet. Ajoutez des catégories dans Admin (Supabase)."
-        : rulesHere === 0
-          ? "Aucune règle de chaîne ne cible ce bouquet. Dans Admin, assignez des chaînes aux catégories de ce package."
-          : "Aucune chaîne du catalogue ne correspond à ces règles (texte exact / sous-chaîne), ou elles sont masquées.";
+    empty.textContent = "Aucune chaîne dans cette catégorie.";
     elDynamicList.appendChild(empty);
   }
 }
@@ -534,7 +438,7 @@ function populateCountrySelectFromAdmin(): void {
     o.value = "";
     o.disabled = true;
     o.selected = true;
-    o.textContent = "Aucun pays (Admin)";
+    o.textContent = "Aucun pays";
     elCountrySelect.appendChild(o);
     elCountrySelect.disabled = true;
     return;
@@ -549,6 +453,37 @@ function populateCountrySelectFromAdmin(): void {
     elCountrySelect.appendChild(o);
   }
 }
+
+function syncAdminSettingsButton(): void {
+  if (!elBtnSettings) return;
+  elBtnSettings.classList.toggle("hidden", !isAdminSession());
+}
+
+elBtnSettings?.addEventListener("click", () => {
+  openSettingsPage();
+});
+
+window.addEventListener("popstate", () => {
+  syncSettingsFromUrl();
+});
+
+window.addEventListener("velora-admin-session-changed", () => {
+  syncAdminSettingsButton();
+});
+
+window.addEventListener("velora-settings-closed", () => {
+  if (state) {
+    void (async () => {
+      await fetchAndApplyCanonicalCountries();
+      await fetchAndApplyChannelNamePrefixes();
+      await fetchAndApplyChannelHideNeedles();
+    })();
+  }
+  if (envAutoConnectConfigured() && !state) {
+    prepareEnvAutoconnectUi();
+    void connect();
+  }
+});
 
 function packagesForSelectedCountry(): AdminPackage[] {
   if (!selectedAdminCountryId) return [];
@@ -566,8 +501,8 @@ function renderPackagesGrid(): void {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
     empty.style.gridColumn = "1 / -1";
-    empty.innerHTML =
-      "Aucun <strong>pays</strong> dans la base. Créez des pays et bouquets dans <a href=\"/admin.html\">Admin</a> (tables Supabase).";
+    empty.textContent =
+      "Aucun pays reconnu dans les titres. Vérifiez le format (ex. « |AM| Brazil ») ou regroupez dans « Autres ».";
     elPackagesView.appendChild(empty);
     return;
   }
@@ -583,7 +518,7 @@ function renderPackagesGrid(): void {
 
   const pkgs = packagesForSelectedCountry();
   for (const pkg of pkgs) {
-    const matched = streamsMatchedInPackage(pkg.id);
+    const matched = streamsForProviderCategory(pkg.id);
     const firstIcon = matched
       .map((s) => resolvedIconUrl(s.stream_icon, st.base))
       .find(Boolean);
@@ -616,6 +551,11 @@ function renderPackagesGrid(): void {
       card.appendChild(em);
     }
 
+    const title = document.createElement("span");
+    title.className = "vel-package-card__title";
+    title.textContent = pkg.name;
+    card.appendChild(title);
+
     card.addEventListener("click", () => openAdminPackage(pkg.id));
     elPackagesView.appendChild(card);
   }
@@ -624,8 +564,7 @@ function renderPackagesGrid(): void {
     const empty = document.createElement("div");
     empty.className = "vel-empty-msg";
     empty.style.gridColumn = "1 / -1";
-    empty.innerHTML =
-      "Aucun <strong>bouquet</strong> pour ce pays dans la base. Ajoutez des packages dans <a href=\"/admin.html\">Admin</a>.";
+    empty.textContent = "Aucune catégorie live pour ce pays dans le catalogue fournisseur.";
     elPackagesView.appendChild(empty);
   }
 }
@@ -727,14 +666,19 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
 }
 
 async function connect(): Promise<void> {
+  applyNodecastEnvDefaults();
   setLoginStatus("");
   const base = normalizeServerInput(elServer.value);
   const username = elUser.value.trim();
   const password = elPass.value;
 
-  if (!base || !username || !password) {
-    setLoginStatus("Renseignez l’URL, l’identifiant et le mot de passe.", true);
+  if (!base || !username) {
+    setLoginStatus("Renseignez l’URL et l’identifiant.", true);
     return;
+  }
+
+  if (envAutoConnectConfigured()) {
+    prepareEnvAutoconnectUi();
   }
 
   elBtnConnect.disabled = true;
@@ -751,7 +695,10 @@ async function connect(): Promise<void> {
       server_protocol: new URL(base).protocol.replace(":", ""),
     };
 
-    await loadAdminConfig();
+    await fetchAndApplyCanonicalCountries();
+    await fetchAndApplyChannelNamePrefixes();
+    await fetchAndApplyChannelHideNeedles();
+    adminConfig = buildProviderAdminConfig(nodecast.categories, streamsByCat);
     populateCountrySelectFromAdmin();
 
     state = {
@@ -772,15 +719,32 @@ async function connect(): Promise<void> {
     goHome();
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
+    syncAdminSettingsButton();
     setLoginStatus("");
   } catch (e) {
-    setLoginStatus(e instanceof Error ? e.message : String(e), true);
+    const msg = e instanceof Error ? e.message : String(e);
+    setLoginStatus(msg, true);
+    if (envAutoConnectConfigured()) {
+      elMain.classList.remove("hidden");
+      elLoginPanel.classList.add("hidden");
+      elHeaderLoginOnly?.classList.add("hidden");
+      elPackagesView.classList.remove("hidden");
+      elPackagesView.innerHTML = `<div class="vel-empty-msg" style="grid-column: 1 / -1; text-align: center; padding: 2rem 1rem; color: #fca5a5">${escapeHtml(msg)}</div>`;
+    } else {
+      elMain.classList.add("hidden");
+      elLoginPanel.classList.remove("hidden");
+      elHeaderLoginOnly?.classList.remove("hidden");
+    }
   } finally {
     elBtnConnect.disabled = false;
   }
 }
 
 function disconnect(): void {
+  setChannelNamePrefixesFromDatabase(null);
+  setChannelHideNeedlesFromDatabase(null);
+  adminConfig = { ...EMPTY_ADMIN_CONFIG };
+  populateCountrySelectFromAdmin();
   state = null;
   activeStreamId = null;
   selectedPillId = "all";
@@ -798,8 +762,15 @@ function disconnect(): void {
   elCatPillsWrap.classList.add("hidden");
   setTabsActive("live");
   applyPresetTheme("default");
+  if (envAutoConnectConfigured()) {
+    applyNodecastEnvDefaults();
+    prepareEnvAutoconnectUi();
+    void connect();
+    return;
+  }
   elMain.classList.add("hidden");
   elLoginPanel.classList.remove("hidden");
+  elHeaderLoginOnly?.classList.remove("hidden");
   setLoginStatus("");
 }
 
@@ -846,9 +817,12 @@ elTabSeries.addEventListener("click", () => onTabClick("series"));
 
 elCountrySelect.addEventListener("change", onCountryChange);
 
-elServer.value = "http://5.180.180.198:3000";
-elUser.value = "samadoxal";
-elPass.value = "123456";
+applyNodecastEnvDefaults();
+if (envAutoConnectConfigured()) {
+  elHeaderLoginOnly?.classList.add("hidden");
+  elLoginPanel.classList.add("hidden");
+  elMain.classList.remove("hidden");
+}
 
 /** Click on the picture (not the native control bar) toggles play / pause. */
 function toggleVideoPlayPause(ev: MouseEvent): void {
@@ -870,7 +844,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-void (async () => {
-  await loadAdminConfig();
+if (envAutoConnectConfigured() && !isSettingsPageOpen()) {
+  prepareEnvAutoconnectUi();
+  void connect();
+} else if (!isSettingsPageOpen()) {
+  void fetchAndApplyCanonicalCountries().catch(() => {});
   populateCountrySelectFromAdmin();
-})();
+  syncAdminSettingsButton();
+} else {
+  syncAdminSettingsButton();
+}

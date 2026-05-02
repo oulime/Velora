@@ -1,4 +1,37 @@
-/** Shared channel label + admin rule matching (player + admin UI). */
+/** Shared channel label + optional rule matching helpers. */
+
+/** Longest first: strip longest configured prefix before shorter overlapping ones. */
+let channelPrefixesOrdered: string[] = [];
+
+/** Called after Supabase fetch; `null` or empty → no prefix stripping. */
+export function setChannelNamePrefixesFromDatabase(prefixes: readonly string[] | null): void {
+  if (!prefixes?.length) {
+    channelPrefixesOrdered = [];
+    return;
+  }
+  const uniq = [...new Set(prefixes.map((p) => p.trim()).filter(Boolean))];
+  uniq.sort((a, b) => b.length - a.length);
+  channelPrefixesOrdered = uniq;
+}
+
+function stripLeadingPrefixes(raw: string): string {
+  let s = raw.trim();
+  if (!channelPrefixesOrdered.length) return s;
+  for (let guard = 0; guard < 64; guard++) {
+    let hit = false;
+    for (const p of channelPrefixesOrdered) {
+      const n = p.length;
+      if (!n || n > s.length) continue;
+      if (s.slice(0, n).toLowerCase() === p.toLowerCase()) {
+        s = s.slice(n).trim();
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) break;
+  }
+  return s.length ? s : raw.trim();
+}
 
 function assignmentExactMatchOnly(): boolean {
   const v = import.meta.env?.VITE_ASSIGNMENT_EXACT_MATCH_ONLY;
@@ -7,15 +40,37 @@ function assignmentExactMatchOnly(): boolean {
   return s === "1" || s === "true" || s === "yes";
 }
 
-/** Strips common FR / country-style prefixes from catalogue titles for display and matching. */
+/** Strips leading prefixes from `admin_channel_name_prefixes` (Supabase), case-insensitive at start. */
 export function displayChannelName(raw: string): string {
-  const s = raw
-    .replace(
-      /^\s*(?:\[[A-Z]{2}\]\s*|\[FR\]\s*|\|?\s*FR\s*\|?\s*|FR\s*[-–—|]\s*|FR\s*:\s+)/i,
-      ""
-    )
-    .trim();
-  return s.length ? s : raw.trim();
+  return stripLeadingPrefixes(raw);
+}
+
+/** Substrings (from `admin_hidden_filters`): if any appears in the channel name, the channel is not listed. */
+let channelHideNeedlesOrdered: string[] = [];
+
+export function setChannelHideNeedlesFromDatabase(needles: readonly string[] | null): void {
+  if (!needles?.length) {
+    channelHideNeedlesOrdered = [];
+    return;
+  }
+  const uniq = [...new Set(needles.map((n) => n.trim()).filter(Boolean))];
+  uniq.sort((a, b) => b.length - a.length);
+  channelHideNeedlesOrdered = uniq;
+}
+
+function haystackForHideMatch(s: string): string {
+  try {
+    return s.normalize("NFKC").trim().toLowerCase();
+  } catch {
+    return s.trim().toLowerCase();
+  }
+}
+
+/** True when the raw catalogue name contains any configured needle (substring, case-insensitive). */
+export function shouldHideChannelByName(rawName: string): boolean {
+  if (!channelHideNeedlesOrdered.length) return false;
+  const hay = haystackForHideMatch(rawName);
+  return channelHideNeedlesOrdered.some((n) => hay.includes(haystackForHideMatch(n)));
 }
 
 export type AssignmentRule = { match_text: string; category_id: string };

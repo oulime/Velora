@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -442,34 +442,57 @@ function proxyMiddleware() {
   };
 }
 
-export default defineConfig({
-  envPrefix: ["VITE_", "NEXT_PUBLIC_"],
-  build: {
-    rollupOptions: {
-      input: {
-        main: path.resolve(__dirname, "index.html"),
-        admin: path.resolve(__dirname, "admin.html"),
+export default defineConfig(({ mode }) => {
+  const rootEnv = loadEnv(mode, process.cwd(), "");
+  const viteAutoconnect = Boolean(
+    rootEnv.VITE_NODECAST_URL?.trim() && rootEnv.VITE_NODECAST_USERNAME?.trim()
+  );
+
+  return {
+    envPrefix: ["VITE_", "NEXT_PUBLIC_"],
+    build: {
+      rollupOptions: {
+        input: {
+          main: path.resolve(__dirname, "index.html"),
+        },
       },
     },
-  },
-  server: {
-    middlewareMode: false,
-  },
-  plugins: [
-    {
-      name: "xtream-media-proxy",
-      configureServer(server) {
-        console.log(
-          "[xtream-proxy] Proxy ready. Failed upstream responses are logged. Verbose: XTREAM_PROXY_DEBUG=1 npm run dev"
-        );
-        server.middlewares.use(proxyMiddleware());
-      },
-      configurePreviewServer(server) {
-        console.log(
-          "[xtream-proxy] Preview proxy ready. Verbose: XTREAM_PROXY_DEBUG=1 npm run preview"
-        );
-        server.middlewares.use(proxyMiddleware());
-      },
+    server: {
+      middlewareMode: false,
     },
-  ],
+    plugins: [
+      {
+        name: "vite-autoconnect-html",
+        transformIndexHtml: {
+          order: "pre",
+          handler(html, ctx) {
+            if (!viteAutoconnect) return html;
+            const name = ctx.filename.replace(/\\/g, "/");
+            if (!name.endsWith("/index.html") && !name.endsWith("\\index.html")) return html;
+            let out = html.replace("<body>", '<body class="vite-autoconnect">');
+            if (!out.includes("vite-autoconnect")) {
+              out = html.replace("<body ", '<body class="vite-autoconnect" ');
+            }
+            out = out.replace('class="main main--velora hidden"', 'class="main main--velora"');
+            return out;
+          },
+        },
+      },
+      {
+        name: "xtream-media-proxy",
+        configureServer(server) {
+          console.log(
+            "[xtream-proxy] Proxy ready. Failed upstream responses are logged. Verbose: XTREAM_PROXY_DEBUG=1 npm run dev"
+          );
+          server.middlewares.use(proxyMiddleware());
+        },
+        configurePreviewServer(server) {
+          console.log(
+            "[xtream-proxy] Preview proxy ready. Verbose: XTREAM_PROXY_DEBUG=1 npm run preview"
+          );
+          server.middlewares.use(proxyMiddleware());
+        },
+      },
+    ],
+  };
 });

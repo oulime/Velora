@@ -16,6 +16,107 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
+    <div id="settings-shell" class="settings-shell countries-admin-page hidden" aria-hidden="true">
+      <div id="settings-view-granted">
+        <header class="countries-admin-head">
+          <div class="countries-admin-head-row">
+            <button type="button" id="cc-back-player" class="countries-admin-back countries-admin-back--btn">
+              ← Lecteur
+            </button>
+            <button type="button" id="cc-quit-admin" class="countries-admin-quit">Quitter le mode admin</button>
+          </div>
+          <h1>Pays (liste de correspondance)</h1>
+          <p class="countries-admin-intro">
+            Chaque ligne associe une <strong>clé de reconnaissance</strong> (texte normalisé au début du nom de
+            catégorie, ex. <code>france</code>, <code>cameroon</code>) au <strong>nom affiché</strong> dans le menu
+            Pays. Vide = le lecteur utilise la liste intégrée par défaut.
+          </p>
+        </header>
+
+        <main class="countries-admin-main">
+          <p id="countries-admin-status" class="status" aria-live="polite"></p>
+
+          <section class="panel countries-admin-form">
+            <h2 id="cc-form-heading">Ajouter</h2>
+            <div class="field row">
+              <div>
+                <label for="cc-match">Clé (ex. france, brazil, [ALB])</label>
+                <input id="cc-match" type="text" placeholder="france ou [ALB]" autocomplete="off" />
+              </div>
+              <div>
+                <label for="cc-display">Nom affiché</label>
+                <input id="cc-display" type="text" placeholder="France" autocomplete="off" />
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="cc-add" class="primary">Ajouter</button>
+              <button type="button" id="cc-cancel-edit" class="countries-admin-cancel hidden">Annuler</button>
+            </div>
+          </section>
+
+          <section class="panel countries-admin-list-wrap">
+            <h2>Entrées</h2>
+            <div id="cc-table-wrap" class="countries-admin-table-wrap"></div>
+          </section>
+
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Préfixes — noms de chaîne</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Texte retiré au <strong>début</strong> du nom pour l’affichage et les règles d’affectation (ex.
+              <code>FR - </code>, <code>[FR] </code>, <code>|FR| </code>). Comparaison insensible à la casse sur
+              le début du titre. Les préfixes les plus longs sont essayés en premier.
+            </p>
+            <p id="cn-prefix-status" class="status" aria-live="polite"></p>
+            <div class="field row">
+              <div>
+                <label for="cn-prefix-val">Préfixe</label>
+                <input id="cn-prefix-val" type="text" placeholder="FR - " autocomplete="off" />
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="cn-prefix-add" class="primary">Ajouter</button>
+            </div>
+            <div id="cn-prefix-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
+          </section>
+
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Mots masqués — noms de chaîne</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Si le <strong>nom brut</strong> d’une chaîne contient l’un de ces textes (n’importe où, insensible à la
+              casse), elle n’apparaît pas dans la liste du package. Ex. <code>18+</code>, <code>XXX</code>.
+            </p>
+            <p id="hf-status" class="status" aria-live="polite"></p>
+            <div class="field row">
+              <div>
+                <label for="hf-needle">Mot ou fragment</label>
+                <input id="hf-needle" type="text" placeholder="18+" autocomplete="off" />
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="hf-add" class="primary">Ajouter</button>
+            </div>
+            <div id="hf-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
+          </section>
+        </main>
+      </div>
+
+      <div id="settings-view-denied" class="hidden">
+        <main class="countries-admin-main panel" style="max-width: 36rem; margin: 2rem auto">
+          <h1>Accès refusé</h1>
+          <p class="countries-admin-intro">
+            Réservé aux administrateurs. Ouvrez une fois le lecteur avec
+            <code>?admin_access=…</code> (valeur = <code>VITE_ADMIN_ACCESS_KEY</code>), puis utilisez
+            <strong>Paramètres</strong>.
+          </p>
+          <p>
+            <button type="button" id="cc-denied-back" class="countries-admin-back countries-admin-back--btn">
+              ← Retour
+            </button>
+          </p>
+        </main>
+      </div>
+    </div>
+
     <div class="app">
       <header class="header header--login-only">
         <h1>Xtream Codes Player</h1>
@@ -62,7 +163,15 @@
           <header class="vel-header">
             <div class="vel-brand">Velora<span>VIP</span></div>
             <div class="vel-header__right">
-              <a href="/admin.html" class="vel-admin-link" title="Admin">Admin</a>
+              <button
+                type="button"
+                id="btn-settings"
+                class="vel-settings-btn hidden"
+                title="Paramètres (admin)"
+                aria-label="Paramètres administrateur"
+              >
+                Paramètres
+              </button>
               <select id="country-select" class="country-select" aria-label="Pays"></select>
               <button type="button" id="btn-logout" class="vel-logout" title="Déconnexion">
                 Out

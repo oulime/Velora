@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "seed:countries": "node scripts/seed-canonical-countries.mjs",
+    "build:seed-sql": "node scripts/build-canonical-countries-seed-sql.mjs",
     "build": "tsc && vite build",
     "build:namecheap": "cross-env VITE_PROXY_PREFIX=/proxy.php tsc && vite build",
     "preview": "vite preview"
@@ -16,7 +18,7 @@
     "vite": "^6.0.1"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.105.1",
+    "@supabase/supabase-js": "^2.49.1",
     "hls.js": "^1.5.7"
   }
 }

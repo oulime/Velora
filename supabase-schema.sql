@@ -76,3 +76,37 @@ alter table public.admin_packages add column if not exists theme_surface text;
 alter table public.admin_packages add column if not exists theme_primary text;
 alter table public.admin_packages add column if not exists theme_glow text;
 alter table public.admin_packages add column if not exists theme_back text;
+
+-- Liste des pays reconnus pour le menu (clé = préfixe normalisé du nom de catégorie IPTV).
+-- Si la table est vide, le lecteur utilise la liste intégrée (fallback).
+create table if not exists public.canonical_countries (
+  id uuid primary key default gen_random_uuid(),
+  match_key text not null,
+  display_name text not null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (match_key)
+);
+
+alter table public.canonical_countries enable row level security;
+
+drop policy if exists "open read/write canonical_countries" on public.canonical_countries;
+
+create policy "open read/write canonical_countries"
+on public.canonical_countries for all to anon, authenticated using (true) with check (true);
+
+-- Préfixes retirés au début des noms de chaînes (affichage + règles d’affectation), ex. "FR - ", "[FR] ".
+create table if not exists public.admin_channel_name_prefixes (
+  id uuid primary key default gen_random_uuid(),
+  prefix text not null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (prefix)
+);
+
+alter table public.admin_channel_name_prefixes enable row level security;
+
+drop policy if exists "open read/write admin_channel_name_prefixes" on public.admin_channel_name_prefixes;
+
+create policy "open read/write admin_channel_name_prefixes"
+on public.admin_channel_name_prefixes for all to anon, authenticated using (true) with check (true);
