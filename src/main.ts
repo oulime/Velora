@@ -65,8 +65,6 @@ import {
   invalidatePackageImageThemeCache,
 } from "./packageImageTheme";
 
-tryConsumeAdminAccessFromUrl();
-
 type ServerInfo = {
   url: string;
   port: string | number;
@@ -164,7 +162,6 @@ const elAddChannelsSubmit = document.getElementById("add-channels-submit") as HT
 const elAddChannelsSelectVisible = document.getElementById("add-channels-select-visible") as HTMLButtonElement | null;
 const elBtnAdminAddChannels = document.getElementById("btn-admin-add-channels") as HTMLButtonElement | null;
 
-applySettingsRouteOnLoad();
 const elPlayerContainer = $("#player-container") as HTMLElement;
 const elMainTabs = $("#main-tabs") as HTMLElement;
 const elPackagesView = $("#packages-view") as HTMLDivElement;
@@ -984,10 +981,16 @@ function syncAdminGridToolsToggleFromStorage(): void {
 }
 
 function syncAdminSettingsButton(): void {
-  elBtnSettings?.classList.toggle("hidden", !isAdminSession());
-  elVelAdminToolsWrap?.classList.toggle("hidden", !isAdminSession());
-  if (isAdminSession()) syncAdminGridToolsToggleFromStorage();
+  const admin = isAdminSession();
+  elBtnSettings?.classList.toggle("hidden", !admin);
+  elVelAdminToolsWrap?.classList.toggle("hidden", !admin);
+  elBtnLogout?.classList.toggle("hidden", !admin);
+  if (admin) syncAdminGridToolsToggleFromStorage();
 }
+
+tryConsumeAdminAccessFromUrl();
+syncAdminSettingsButton();
+applySettingsRouteOnLoad();
 
 elBtnSettings?.addEventListener("click", () => {
   openSettingsPage();
@@ -1022,6 +1025,8 @@ elToggleAdminUi?.addEventListener("change", () => {
 });
 
 window.addEventListener("popstate", () => {
+  tryConsumeAdminAccessFromUrl();
+  syncAdminSettingsButton();
   syncSettingsFromUrl();
 });
 

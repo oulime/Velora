@@ -110,9 +110,8 @@
         <main class="countries-admin-main panel" style="max-width: 36rem; margin: 2rem auto">
           <h1>Accès refusé</h1>
           <p class="countries-admin-intro">
-            Réservé aux administrateurs. Ouvrez une fois le lecteur avec
-            <code>?admin_access=…</code> (valeur = <code>VITE_ADMIN_ACCESS_KEY</code>), puis utilisez
-            <strong>Paramètres</strong>.
+            Réservé aux administrateurs. Ouvrez le lecteur avec <code>?admin=1</code> dans l’URL (puis rechargez si
+            besoin), puis <strong>Paramètres</strong>. Pour désactiver l’admin : <code>?admin=0</code>.
           </p>
           <p>
             <button type="button" id="cc-denied-back" class="countries-admin-back countries-admin-back--btn">
@@ -188,7 +187,7 @@
                 </label>
               </div>
               <select id="country-select" class="country-select" aria-label="Pays"></select>
-              <button type="button" id="btn-logout" class="vel-logout" title="Déconnexion">
+              <button type="button" id="btn-logout" class="vel-logout hidden" title="Déconnexion">
                 Out
               </button>
             </div>
