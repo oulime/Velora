@@ -18,6 +18,16 @@ interface ImportMetaEnv {
   readonly VITE_R2_COVER_UPLOAD?: string;
   /** When "1" or "true", logs package-cover upload + grid image load to the browser console (and R2 server route when set in env). */
   readonly VITE_DEBUG_PACKAGE_COVER?: string;
+  /**
+   * Initial country when none is stored in session yet: exact `admin_countries`-style id
+   * (e.g. `country_france`) or a display name match (e.g. `France`, `Maroc`).
+   */
+  readonly VITE_DEFAULT_COUNTRY?: string;
+  /**
+   * When Xtream `get_series` is empty: load series from this URL instead of `{base}/api/favorites?itemType=series`.
+   * Absolute (`https://host/api/...`) or path starting with `/` (appended to Nodecast `base`).
+   */
+  readonly VITE_NODECAST_SERIES_FAVORITES_URL?: string;
 }
 
 interface ImportMeta {

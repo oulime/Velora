@@ -6,7 +6,7 @@ import {
   handleR2PackageCoverRoute,
   isR2PackageCoverRoute,
 } from "./api/r2PackageCoverShared";
-import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/lib/proxyParamTransport";
+import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

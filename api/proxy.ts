@@ -8,7 +8,7 @@
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { fromBase64UrlUtf8, proxiedFullUrl } from "./lib/proxyParamTransport";
+import { fromBase64UrlUtf8, proxiedFullUrl } from "./proxyParamTransport.js";
 
 const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
 

@@ -352,18 +352,24 @@ function destroyPlayer(): void {
   elVideo.removeAttribute("title");
   elVideo.load();
   elNowPlaying.textContent = "";
+  elPlayerContainer.classList.remove("player-container--live-tv");
   showPlayerChrome(false);
 }
 
 function playUrl(
   url: string,
   label: string,
-  upstreamAuth?: Record<string, string>
+  upstreamAuth?: Record<string, string>,
+  /** Live HLS (direct Xtream / chaîne Nodecast) : masque la barre de progression native (flux non borné). */
+  hideNativeProgressBar = false
 ): void {
   destroyPlayer();
   const proxied = proxiedUrl(url);
   elNowPlaying.innerHTML = nowPlayingLiveMarkup(label);
   showPlayerChrome(true);
+  if (hideNativeProgressBar) {
+    elPlayerContainer.classList.add("player-container--live-tv");
+  }
 
   const hasUpstreamAuth = Boolean(
     upstreamAuth &&
@@ -878,6 +884,17 @@ function countryRowsForSelect(): AdminCountry[] {
   return out;
 }
 
+/** `VITE_DEFAULT_COUNTRY`: id exact, sinon nom affiché (normalisé comme le catalogue). */
+function defaultCountryIdFromEnv(countries: AdminCountry[]): string | null {
+  const raw = import.meta.env.VITE_DEFAULT_COUNTRY?.trim();
+  if (!raw) return null;
+  if (countries.some((c) => c.id === raw)) return raw;
+  const nk = normalizeCountryKey(raw);
+  if (!nk) return null;
+  const hit = countries.find((c) => normalizeCountryKey(c.name) === nk);
+  return hit?.id ?? null;
+}
+
 function ensureSelectedCountry(): void {
   const countries = countryRowsForSelect();
   if (countries.length === 0) {
@@ -896,6 +913,11 @@ function ensureSelectedCountry(): void {
     }
   } catch {
     /* ignore */
+  }
+  const fromEnv = defaultCountryIdFromEnv(countries);
+  if (fromEnv) {
+    selectedAdminCountryId = fromEnv;
+    return;
   }
   selectedAdminCountryId = countries[0]?.id ?? null;
 }
@@ -2120,6 +2142,8 @@ function onTabClick(tab: UiTab): void {
 
 async function playStreamByMode(s: LiveStream): Promise<void> {
   if (!state) return;
+  const hideLiveProgress =
+    s.nodecast_media !== "vod" && s.nodecast_media !== "series";
   if (state.mode === "nodecast") {
     showPlayerChrome(true);
     elNowPlaying.innerHTML = nowPlayingLiveMarkup(displayChannelName(s.name));
@@ -2153,7 +2177,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
       return;
     }
     s.direct_source = resolved;
-    playUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders);
+    playUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders, hideLiveProgress);
     return;
   }
   const m3u8 = buildLiveStreamUrl(
@@ -2163,7 +2187,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
     s.stream_id,
     "m3u8"
   );
-  playUrl(m3u8, displayChannelName(s.name));
+  playUrl(m3u8, displayChannelName(s.name), undefined, hideLiveProgress);
 }
 
 async function connect(): Promise<void> {

@@ -3,7 +3,7 @@
  * so a target like `…/api/proxy/stream?url=http%3A%2F%2Fcdn…` becomes `…%253A%252F…` upstream.
  * When the target (or `from`) contains percent-encoded octets, we ship it as base64 instead.
  *
- * Lives under `api/lib/` so Vercel/Lambda bundles it with `api/proxy` (no `../src/` import).
+ * Sibling of `api/proxy.ts` with `.js` extension in server imports so Vercel bundles it (see r2-package-cover).
  */
 
 export function proxyQueryNeedsB64Transport(s: string): boolean {

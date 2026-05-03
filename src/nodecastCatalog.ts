@@ -119,6 +119,15 @@ function asArray(payload: unknown): unknown[] {
   if (Array.isArray(o.data)) return o.data;
   if (Array.isArray(o.items)) return o.items;
   if (Array.isArray(o.results)) return o.results;
+  if (Array.isArray(o.favorites)) return o.favorites;
+  if (Array.isArray(o.favoriteItems)) return o.favoriteItems;
+  if (Array.isArray(o.records)) return o.records;
+  if (Array.isArray(o.list)) return o.list;
+  if (Array.isArray(o.payload)) return o.payload;
+  if (Array.isArray(o.content)) return o.content;
+  if (Array.isArray(o.favoriteSeries)) return o.favoriteSeries;
+  if (Array.isArray(o.favorite_series)) return o.favorite_series;
+  if (Array.isArray(o.series_list)) return o.series_list;
   /** Some panels wrap lists in `data: { series: [...] }` (non-array `data`). */
   if (o.data && typeof o.data === "object" && !Array.isArray(o.data)) {
     const nested = asArray(o.data);
@@ -610,6 +619,29 @@ function mapXtreamCategoryRow(raw: unknown): LiveCategory | null {
   return { category_id: id, category_name: name, parent_id: 0 };
 }
 
+function numericXtreamSeriesId(c: Record<string, unknown>, index: number): number {
+  const tryNum = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+    if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+      const n = Number(v.trim());
+      return Number.isFinite(n) && n > 0 ? n : null;
+    }
+    return null;
+  };
+  for (const k of [
+    "series_id",
+    "seriesId",
+    "xtream_series_id",
+    "xtreamSeriesId",
+    "stream_id",
+    "id",
+  ] as const) {
+    const n = tryNum(c[k]);
+    if (n != null) return n;
+  }
+  return index + 1;
+}
+
 function mapNodecastSeriesToStream(
   raw: unknown,
   index: number,
@@ -619,9 +651,19 @@ function mapNodecastSeriesToStream(
 ): LiveStream | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
-  const name = String(c.name ?? c.title ?? `Série ${index + 1}`).trim();
+  const name = String(
+    c.name ??
+      c.title ??
+      c.series_name ??
+      c.seriesName ??
+      c.label ??
+      c.displayName ??
+      c.display_name ??
+      c.seriesTitle ??
+      `Série ${index + 1}`
+  ).trim();
   if (!name) return null;
-  const seriesId = Number(c.series_id ?? c.id ?? index + 1);
+  const seriesId = numericXtreamSeriesId(c, index);
   const catRaw = c.category_id ?? c.category_ids;
   let categoryId: string;
   if (Array.isArray(catRaw) && catRaw.length) {
@@ -749,9 +791,92 @@ async function loadXtreamSeriesCatalog(
     }
   }
 
-  if (!allSeries.length) return null;
+  if (!allSeries.length) {
+    const fromFavorites = await loadSeriesCatalogFromFavoritesApi(base, sourceId, headers);
+    if (fromFavorites) return fromFavorites;
+    return null;
+  }
   const categories = seriesCats.length ? seriesCats : categoriesFromStreams(allSeries);
   return { categories, streamsByCat: groupStreamsByCategory(allSeries) };
+}
+
+/** Favorites rows often wrap the Xtream row under `series` / `item` / etc. */
+function unwrapFavoriteSeriesRow(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const o = raw as Record<string, unknown>;
+  const nestedKeys = [
+    "series",
+    "item",
+    "content",
+    "show",
+    "program",
+    "vod",
+    "xtream",
+    "xtream_series",
+    "metadata",
+  ] as const;
+  for (const k of nestedKeys) {
+    const v = o[k];
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const inner = v as Record<string, unknown>;
+    if (
+      inner.name ||
+      inner.title ||
+      inner.series_name ||
+      inner.series_id != null ||
+      inner.seriesId != null
+    ) {
+      return { ...o, ...inner };
+    }
+  }
+  if (o.data && typeof o.data === "object" && !Array.isArray(o.data)) {
+    const inner = o.data as Record<string, unknown>;
+    if (inner.name || inner.title || inner.series_id != null) return { ...o, ...inner };
+  }
+  return raw;
+}
+
+/** Nodecast-style favorites list when Xtream `get_series` is empty (same auth as catalogue). */
+async function loadSeriesCatalogFromFavoritesApi(
+  base: string,
+  sourceId: string,
+  headers?: Record<string, string>
+): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> } | null> {
+  const root = base.replace(/\/+$/, "");
+  const enc = encodeURIComponent(sourceId);
+  const raw = import.meta.env.VITE_NODECAST_SERIES_FAVORITES_URL?.trim();
+  const urls: string[] = [];
+  if (raw) {
+    urls.push(
+      /^https?:\/\//i.test(raw)
+        ? raw
+        : `${root}${raw.startsWith("/") ? raw : `/${raw}`}`
+    );
+  } else {
+    urls.push(`${root}/api/favorites?itemType=series`);
+    urls.push(`${root}/api/favorites?itemType=series&sourceId=${enc}`);
+    urls.push(`${root}/api/favorites?itemType=series&source_id=${enc}`);
+    urls.push(`${root}/api/favorites?itemType=series&xtreamSourceId=${enc}`);
+  }
+
+  for (const url of urls) {
+    try {
+      const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
+      const arr = asArray(payload);
+      const mapped = arr
+        .map((item, idx) => mapNodecastSeriesToStream(unwrapFavoriteSeriesRow(item), idx, sourceId))
+        .filter((s): s is LiveStream => s != null);
+      if (mapped.length) {
+        return {
+          categories: categoriesFromStreams(mapped),
+          streamsByCat: groupStreamsByCategory(mapped),
+        };
+      }
+    } catch {
+      /* try next URL */
+    }
+  }
+  return null;
 }
 
 export async function tryNodecastLoginAndLoad(

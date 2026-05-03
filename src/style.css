@@ -1950,6 +1950,13 @@ a.topbar__admin-link {
   background: rgba(18, 16, 28, 0.25);
 }
 
+/* Live TV only : timeline / durées sans sens sur HLS non borné (Chromium, Safari, Edge). */
+.player-container--live-tv video::-webkit-media-controls-timeline,
+.player-container--live-tv video::-webkit-media-controls-current-time-display,
+.player-container--live-tv video::-webkit-media-controls-time-remaining-display {
+  display: none !important;
+}
+
 .vel-body {
   flex: 1;
   padding-bottom: 2rem;
