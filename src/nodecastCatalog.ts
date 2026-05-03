@@ -17,6 +17,8 @@ export type LiveStream = {
   nodecast_source_id?: string;
   /** Xtream via Nodecast: VOD movie / series row (playback URL differs from live). */
   nodecast_media?: "live" | "vod" | "series";
+  /** VOD row: container from panel (e.g. mp4) for `/movie/{id}.{ext}` proxy paths. */
+  container_extension?: string;
 };
 
 export type ProxiedRequestInit = {
@@ -127,7 +129,12 @@ function asArray(payload: unknown): unknown[] {
 }
 
 function looksLikeMediaUrl(v: string): boolean {
-  return /^https?:\/\//i.test(v) && /(\.m3u8|\.mpd|\.ts|\/live\/|\/hls\/|\/stream\/)/i.test(v);
+  return (
+    /^https?:\/\//i.test(v) &&
+    /(\.m3u8|\.mpd|\.ts|\.mp4|\.mkv|\.mov|\/live\/|\/hls\/|\/stream\/|\/movie\/|\/vod\/)/i.test(
+      v
+    )
+  );
 }
 
 function extractStreamUrlDeep(payload: unknown): string | null {
@@ -303,6 +310,26 @@ async function resolveCandidateToPlayableUrl(
     const r = await fetch(proxiedUrl(candidate), { method: "GET", headers });
     if (!r.ok) return null;
     const ct = (r.headers.get("content-type") || "").toLowerCase();
+
+    if (
+      ct.includes("video/") &&
+      !ct.includes("mpegurl") &&
+      !ct.includes("x-mpegurl")
+    ) {
+      return candidate;
+    }
+    if (ct.includes("application/octet-stream")) {
+      if (/\.m3u8(\?|$)/i.test(candidate)) {
+        /* read body below — may still be a playlist */
+      } else if (
+        /(\.(mp4|mkv|avi|mov|webm)(\?|$))|\/movie\/[^/?]+(\?|$)|\/vod\/[^/?]+(\?|$)/i.test(
+          candidate
+        )
+      ) {
+        return candidate;
+      }
+    }
+
     const body = await r.text();
 
     if (ct.includes("application/vnd.apple.mpegurl") || ct.includes("application/x-mpegurl")) {
@@ -363,12 +390,19 @@ export function mapNodecastChannelToLiveStream(raw: unknown, index: number): Liv
     (typeof c.cover === "string" && c.cover.trim()) ||
     (typeof c.icon === "string" && c.icon.trim()) ||
     "";
+  const containerExtRaw =
+    typeof c.container_extension === "string" ? c.container_extension.trim() : "";
+  const container_extension =
+    containerExtRaw && /^[a-z0-9]+$/i.test(containerExtRaw)
+      ? containerExtRaw.toLowerCase()
+      : undefined;
   return {
     stream_id: Number.isFinite(numericId) ? numericId : index + 1,
     name,
     category_id: categoryId,
     stream_icon: iconRaw || undefined,
     direct_source: directSource || undefined,
+    container_extension,
     nodecast_channel_id: String(c.channel_id ?? c.id ?? c.stream_id ?? ""),
   };
 }
@@ -754,6 +788,128 @@ export async function tryNodecastLoginAndLoad(
   };
 }
 
+function extractMovieDataBlob(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object") return null;
+  const r = payload as Record<string, unknown>;
+  const md = r.movie_data;
+  if (md && typeof md === "object" && !Array.isArray(md)) {
+    return md as Record<string, unknown>;
+  }
+  const data = r.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>;
+    const md2 = d.movie_data;
+    if (md2 && typeof md2 === "object" && !Array.isArray(md2)) {
+      return md2 as Record<string, unknown>;
+    }
+    return d;
+  }
+  return r;
+}
+
+function containerExtFromVodInfoPayload(payload: unknown): string | null {
+  const blob = extractMovieDataBlob(payload);
+  if (!blob) return null;
+  const ext = String(blob.container_extension ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 8);
+  return ext || null;
+}
+
+function extractVodPlaybackHrefFromInfo(payload: unknown): string | null {
+  const deep = extractStreamUrlDeep(payload);
+  if (deep) return deep;
+  const blob = extractMovieDataBlob(payload);
+  if (!blob) return null;
+  for (const k of [
+    "direct_source",
+    "stream_url",
+    "movie_play_link",
+    "iframe",
+    "url",
+    "hls_url",
+    "playback_url",
+  ]) {
+    const v = blob[k];
+    if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) return v.trim();
+  }
+  return null;
+}
+
+async function resolvePlaybackHrefViaNodecast(
+  nodecastBase: string,
+  href: string,
+  headers?: Record<string, string>
+): Promise<string | null> {
+  const trimmed = href.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  const b = nodecastBase.replace(/\/+$/, "");
+  let nodeOrigin: string;
+  try {
+    nodeOrigin = new URL(b).origin;
+  } catch {
+    return null;
+  }
+  let extracted: URL;
+  try {
+    extracted = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (extracted.origin === nodeOrigin) {
+    return resolveCandidateToPlayableUrl(extracted.href, headers);
+  }
+  const viaProxy = buildNodecastProxyStreamPlaylistUrl(b, extracted.href);
+  const proxiedPlayable = await resolveCandidateToPlayableUrl(viaProxy, headers);
+  if (proxiedPlayable) return proxiedPlayable;
+  return createNodecastTranscodeUrl(b, extracted.href, headers);
+}
+
+async function tryResolveVodFromGetInfo(
+  b: string,
+  sid: string,
+  streamId: string,
+  s: LiveStream,
+  headers?: Record<string, string>
+): Promise<string | null> {
+  const infoUrls = [
+    `${b}/api/proxy/xtream/${sid}/get_vod_info?vod_id=${streamId}`,
+    `${b}/api/proxy/xtream/${sid}/get_vod_info?stream_id=${streamId}`,
+    `${b}/api/proxy/xtream/${sid}/get_vod_info?id=${streamId}`,
+  ];
+  for (const u of infoUrls) {
+    try {
+      const payload = await fetchProxiedJsonWithInit<unknown>(u, { headers });
+      const href = extractVodPlaybackHrefFromInfo(payload);
+      if (href) {
+        const r = await resolvePlaybackHrefViaNodecast(b, href, headers);
+        if (r) return r;
+      }
+      const extFromPayload = containerExtFromVodInfoPayload(payload);
+      const ext =
+        (extFromPayload && /^[a-z0-9]+$/i.test(extFromPayload)
+          ? extFromPayload.toLowerCase()
+          : null) ??
+        (s.container_extension && /^[a-z0-9]+$/i.test(s.container_extension)
+          ? s.container_extension.toLowerCase()
+          : null);
+      if (ext) {
+        const byExt = [
+          `${b}/api/proxy/xtream/${sid}/stream/${streamId}/movie?container=${ext}`,
+          `${b}/api/proxy/xtream/${sid}/stream/${streamId}/vod?container=${ext}`,
+          `${b}/api/proxy/xtream/${sid}/movie/${streamId}.${ext}`,
+          `${b}/api/proxy/xtream/${sid}/vod/${streamId}.${ext}`,
+        ];
+        for (const c of byExt) {
+          const playable = await resolveCandidateToPlayableUrl(c, headers);
+          if (playable) return playable;
+        }
+      }
+    } catch {
+      /* try next URL */
+    }
+  }
+  return null;
+}
+
 export async function resolveNodecastStreamUrl(
   base: string,
   s: LiveStream,
@@ -806,15 +962,48 @@ export async function resolveNodecastVodStreamUrl(
 ): Promise<string | null> {
   const rawSid = (s.nodecast_source_id ?? "").trim();
   if (!rawSid) return null;
+  const b = base.replace(/\/+$/, "");
   const sid = encodeURIComponent(rawSid);
   const streamId = encodeURIComponent(String(s.stream_id));
-  const candidates = [
-    `${base}/api/proxy/xtream/${sid}/stream/${streamId}/vod?container=m3u8`,
-    `${base}/api/proxy/xtream/${sid}/stream/${streamId}/vod?container=ts`,
-    `${base}/api/proxy/xtream/${sid}/stream/${streamId}/vod`,
-    `${base}/api/proxy/xtream/${sid}/vod/${streamId}.m3u8`,
-    `${base}/api/proxy/xtream/${sid}/movie/${streamId}`,
-  ];
+
+  const ds = (s.direct_source ?? "").trim();
+  if (ds && /^https?:\/\//i.test(ds)) {
+    const fromDirect = await resolvePlaybackHrefViaNodecast(b, ds, authHeaders);
+    if (fromDirect) return fromDirect;
+  }
+
+  const fromInfo = await tryResolveVodFromGetInfo(b, sid, streamId, s, authHeaders);
+  if (fromInfo) return fromInfo;
+
+  const candidates: string[] = [];
+  const ext = (s.container_extension ?? "").trim().toLowerCase();
+  if (ext && /^[a-z0-9]+$/.test(ext)) {
+    candidates.push(
+      `${b}/api/proxy/xtream/${sid}/stream/${streamId}/movie?container=${ext}`,
+      `${b}/api/proxy/xtream/${sid}/stream/${streamId}/vod?container=${ext}`,
+      `${b}/api/proxy/xtream/${sid}/movie/${streamId}.${ext}`,
+      `${b}/api/proxy/xtream/${sid}/vod/${streamId}.${ext}`,
+      `${b}/api/proxy/xtream/${sid}/movie/${streamId}.${ext}?container=m3u8`
+    );
+  }
+  const streamContainers = ["m3u8", "mkv", "ts", "mp4"] as const;
+  for (const c of streamContainers) {
+    candidates.push(
+      `${b}/api/proxy/xtream/${sid}/stream/${streamId}/vod?container=${c}`,
+      `${b}/api/proxy/xtream/${sid}/stream/${streamId}/movie?container=${c}`
+    );
+  }
+  candidates.push(
+    `${b}/api/proxy/xtream/${sid}/stream/${streamId}/vod`,
+    `${b}/api/proxy/xtream/${sid}/stream/${streamId}/movie`,
+    `${b}/api/proxy/xtream/${sid}/vod/${streamId}.m3u8`,
+    `${b}/api/proxy/xtream/${sid}/vod/${streamId}.ts`,
+    `${b}/api/proxy/xtream/${sid}/movie/${streamId}`,
+    `${b}/api/proxy/xtream/${sid}/movie/${streamId}.m3u8`,
+    `${b}/api/proxy/xtream/${sid}/movie/${streamId}.mp4`,
+    `${b}/api/proxy/xtream/${sid}/play/${streamId}`,
+    `${b}/api/proxy/xtream/${sid}/stream/${streamId}`
+  );
   for (const candidate of candidates) {
     const playable = await resolveCandidateToPlayableUrl(candidate, authHeaders);
     if (playable) return playable;

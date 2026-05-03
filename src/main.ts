@@ -491,7 +491,15 @@ function updatePillsVisibility(): void {
 }
 
 function renderCategoryPills(): void {
-  if (uiTab !== "live" || uiAdminPackageId == null || !state) return;
+  if (!state || uiAdminPackageId == null) return;
+  /** Films / séries : pas de pastilles live, mais la liste des titres doit s’afficher. */
+  if (uiTab === "movies" || uiTab === "series") {
+    elCatPills.innerHTML = "";
+    updatePillsVisibility();
+    renderPackageChannelList();
+    return;
+  }
+  if (uiTab !== "live") return;
   elCatPills.innerHTML = "";
   if (!pillDefs.some((p) => p.id === selectedPillId)) {
     selectedPillId = "all";
