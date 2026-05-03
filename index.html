@@ -198,6 +198,15 @@
           <div id="now-playing" class="player-now-playing vel-now-playing hidden" role="status" aria-live="polite"></div>
 
           <div id="player-container" class="player-container hidden" aria-hidden="true">
+            <button
+              type="button"
+              id="btn-close-player"
+              class="vel-player-dismiss-x hidden"
+              title="Fermer le lecteur"
+              aria-label="Fermer le lecteur"
+            >
+              ×
+            </button>
             <div class="video-wrapper">
               <video id="video" controls playsinline></video>
             </div>
@@ -440,7 +449,8 @@
         <h2 class="admin-add-package-dialog__title">Recadrer en carré</h2>
         <p class="admin-add-package-dialog__hint">
           L’image entière tient dans le carré (bandes latérales ou haut / bas si besoin). Choisissez la couleur des
-          bandes, puis déplacez ou zoomez si vous voulez un cadrage plus serré.
+          bandes : elle remplit aussi l’espace si vous dézoomez. Déplacez, zoomez avant (serré) ou arrière (vue plus
+          large).
         </p>
         <div
           id="crop-sq-viewport"
@@ -457,7 +467,7 @@
         </div>
         <div class="cover-crop-zoom">
           <label for="crop-sq-zoom">Zoom</label>
-          <input type="range" id="crop-sq-zoom" min="100" max="300" value="100" step="2" />
+          <input type="range" id="crop-sq-zoom" min="35" max="300" value="100" step="2" />
         </div>
         <p id="crop-sq-err" class="cover-crop-err" role="alert"></p>
         <div class="actions">

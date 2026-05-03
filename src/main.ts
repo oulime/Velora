@@ -163,6 +163,7 @@ const elAddChannelsSelectVisible = document.getElementById("add-channels-select-
 const elBtnAdminAddChannels = document.getElementById("btn-admin-add-channels") as HTMLButtonElement | null;
 
 const elPlayerContainer = $("#player-container") as HTMLElement;
+const elBtnClosePlayer = document.getElementById("btn-close-player") as HTMLButtonElement | null;
 const elMainTabs = $("#main-tabs") as HTMLElement;
 const elPackagesView = $("#packages-view") as HTMLDivElement;
 const elContentView = $("#content-view") as HTMLElement;
@@ -346,11 +347,30 @@ function setTabsActive(tab: UiTab): void {
   elTabSeries.classList.toggle("active", tab === "series");
 }
 
+/** × sur le lecteur : visible seulement sur la grille bouquets (hors package), lecteur affiché. */
+function syncPlayerDismissOverlay(): void {
+  if (!elBtnClosePlayer) return;
+  const playerShown = !elPlayerContainer.classList.contains("hidden");
+  const onPackagesGrid = uiShell === "packages";
+  const show = playerShown && onPackagesGrid && state != null;
+  elBtnClosePlayer.classList.toggle("hidden", !show);
+}
+
 function showPlayerChrome(show: boolean): void {
   elPlayerContainer.classList.toggle("hidden", !show);
   elPlayerContainer.setAttribute("aria-hidden", show ? "false" : "true");
   elNowPlaying.classList.toggle("hidden", !show);
   elNowPlaying.setAttribute("aria-hidden", show ? "false" : "true");
+  syncPlayerDismissOverlay();
+}
+
+/** Arrête la lecture et masque le lecteur ; met à jour la liste des chaînes si on est encore dans un bouquet. */
+function closePlayerUserAction(): void {
+  activeStreamId = null;
+  destroyPlayer();
+  if (state && uiShell === "content" && uiAdminPackageId != null) {
+    renderPackageChannelList();
+  }
 }
 
 function destroyPlayer(): void {
@@ -985,6 +1005,7 @@ function syncAdminSettingsButton(): void {
   elBtnSettings?.classList.toggle("hidden", !admin);
   elVelAdminToolsWrap?.classList.toggle("hidden", !admin);
   elBtnLogout?.classList.toggle("hidden", !admin);
+  elMain.classList.toggle("main--velora-admin", admin);
   if (admin) syncAdminGridToolsToggleFromStorage();
 }
 
@@ -1589,10 +1610,12 @@ function openAdminPackage(packageId: string): void {
   renderCategoryPills();
   updatePillsVisibility();
   syncAdminAddChannelsButton();
+  syncPlayerDismissOverlay();
 }
 
 /** Grille bouquets : conserve l’onglet (Live / Films / Séries). */
 function showPackagesShell(): void {
+  activeStreamId = null;
   uiShell = "packages";
   uiAdminPackageId = null;
   setTabsActive(uiTab);
@@ -1604,6 +1627,7 @@ function showPackagesShell(): void {
   selectedPillId = "all";
   syncAdminAddChannelsButton();
   if (state) renderPackagesGrid();
+  syncPlayerDismissOverlay();
 }
 
 function goLiveHome(): void {
@@ -2199,6 +2223,8 @@ function showVodPlaceholder(
   kind: "movies" | "series",
   reason: "no-nodecast" | "no-xtream-source" | "empty" = "no-nodecast"
 ): void {
+  activeStreamId = null;
+  destroyPlayer();
   uiShell = "content";
   uiTab = kind;
   uiAdminPackageId = null;
@@ -2294,6 +2320,8 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
     showVodPlaceholder(tab, "empty");
     return;
   }
+  activeStreamId = null;
+  destroyPlayer();
   uiTab = tab;
   uiShell = "packages";
   uiAdminPackageId = null;
@@ -2307,6 +2335,7 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
   populateCountrySelectFromAdmin();
   renderPackagesGrid();
   syncAdminAddChannelsButton();
+  syncPlayerDismissOverlay();
 }
 
 function onTabClick(tab: UiTab): void {
@@ -2523,11 +2552,13 @@ function onCountryChange(): void {
 
   if (uiShell === "packages") {
     renderPackagesGrid();
+    syncPlayerDismissOverlay();
   }
 }
 
 elBtnConnect.addEventListener("click", () => void connect());
 elBtnLogout.addEventListener("click", disconnect);
+elBtnClosePlayer?.addEventListener("click", () => closePlayerUserAction());
 elBtnBackHome.addEventListener("click", () => {
   showPackagesShell();
 });

@@ -8,6 +8,9 @@ const VIEW_CSS = 300;
 const EXPORT_MAX = 960;
 const JPEG_QUALITY_START = 0.9;
 const DEFAULT_FILL = "#141118";
+/** 1 = image entière « contain » dans le carré ; sous 1 = dézoom (marges remplies par la couleur des bandes). */
+const ZOOM_MIN = 0.35;
+const ZOOM_MAX = 3;
 
 const elDialog = document.getElementById("dialog-cover-square-crop") as HTMLDialogElement | null;
 const elCanvas = document.getElementById("crop-sq-canvas") as HTMLCanvasElement | null;
@@ -88,7 +91,7 @@ function setZoomClamped(z: number, anchorScreenX: number, anchorScreenY: number)
   const oldS = scale();
   const oldPx = px;
   const oldPy = py;
-  const nz = Math.max(1, Math.min(3, z));
+  const nz = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   zoom = nz;
   const newS = scale();
   if (oldS === newS) {
