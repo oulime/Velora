@@ -934,6 +934,11 @@ function readAdminGridToolsEnabled(): boolean {
   return true;
 }
 
+/** Grille bouquets : Live, Films ou Séries (overrides image + thème comme le live). */
+function isPackagesGridTab(): boolean {
+  return uiTab === "live" || uiTab === "movies" || uiTab === "series";
+}
+
 function syncAdminGridToolsToggleFromStorage(): void {
   if (!elToggleAdminUi) return;
   const on = readAdminGridToolsEnabled();
@@ -1001,7 +1006,7 @@ window.addEventListener("velora-settings-closed", () => {
       await fetchAndApplyChannelNamePrefixes();
       await fetchAndApplyChannelHideNeedles();
       await refreshSupabaseHierarchy();
-      if (uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+      if (uiShell === "packages" && isPackagesGridTab()) renderPackagesGrid();
     })();
   }
   if (envAutoConnectConfigured() && !state) {
@@ -1227,9 +1232,13 @@ function renderPackagesGrid(): void {
     return;
   }
 
-  const showAdminGridTools =
-    isAdminSession() && Boolean(getSupabaseClient()) && readAdminGridToolsEnabled() && uiTab === "live";
-  if (showAdminGridTools) appendAddPackageCard();
+  const showAdminPackageImageTools =
+    isAdminSession() &&
+    Boolean(getSupabaseClient()) &&
+    readAdminGridToolsEnabled() &&
+    isPackagesGridTab();
+  const showAdminLiveGridExtras = showAdminPackageImageTools && uiTab === "live";
+  if (showAdminLiveGridExtras) appendAddPackageCard();
 
   const pkgs = mergedPackagesForGrid();
   for (const pkg of pkgs) {
@@ -1247,12 +1256,15 @@ function renderPackagesGrid(): void {
       card.dataset.packageId = pkg.id;
       card.setAttribute("aria-label", pkg.name);
 
-      if (showAdminGridTools) {
+      if (showAdminPackageImageTools) {
         const edit = document.createElement("button");
         edit.type = "button";
         edit.className = "admin-pkg-edit-sb";
         edit.setAttribute("aria-label", `Image — ${pkg.name}`);
-        edit.title = "Modifier l’image du bouquet";
+        edit.title =
+          uiTab === "live"
+            ? "Modifier l’image du bouquet"
+            : "Modifier l’image de la catégorie (affiche + thème)";
         edit.textContent = "🖼";
         edit.addEventListener("click", (ev) => {
           ev.preventDefault();
@@ -1260,7 +1272,8 @@ function renderPackagesGrid(): void {
           openPackageCoverEditDialog(pkg);
         });
         card.appendChild(edit);
-
+      }
+      if (showAdminLiveGridExtras) {
         const del = document.createElement("button");
         del.type = "button";
         del.className = "admin-pkg-del-sb";
@@ -1342,7 +1355,8 @@ function renderPackagesGrid(): void {
       card.appendChild(title);
 
       card.addEventListener("click", (ev) => {
-        if ((ev.target as HTMLElement).closest(".admin-pkg-del-sb, .admin-pkg-edit-sb")) return;
+        if ((ev.target as HTMLElement).closest(".admin-pkg-del-sb, .admin-pkg-edit-sb"))
+          return;
         openAdminPackage(pkg.id);
       });
       card.addEventListener("keydown", (ev) => {
@@ -1361,12 +1375,15 @@ function renderPackagesGrid(): void {
     card.dataset.packageId = pkg.id;
     card.setAttribute("aria-label", pkg.name);
 
-    if (showAdminGridTools) {
+    if (showAdminPackageImageTools) {
       const edit = document.createElement("button");
       edit.type = "button";
       edit.className = "admin-pkg-edit-sb";
       edit.setAttribute("aria-label", `Image — ${pkg.name}`);
-      edit.title = "Modifier l’image du bouquet";
+      edit.title =
+        uiTab === "live"
+          ? "Modifier l’image du bouquet"
+          : "Modifier l’image de la catégorie (affiche + thème)";
       edit.textContent = "🖼";
       edit.addEventListener("click", (ev) => {
         ev.preventDefault();
@@ -1663,8 +1680,8 @@ elPceClear?.addEventListener("click", () => {
       invalidatePackageImageThemeCache(id);
       await refreshSupabaseHierarchy();
       closePackageCoverEditDialog();
-      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
-      if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId === id) {
+      if (state && uiShell === "packages" && isPackagesGridTab()) renderPackagesGrid();
+      if (state && uiShell === "content" && uiAdminPackageId === id && isPackagesGridTab()) {
         applyThemeForPackage(findPackageById(id) ?? null);
       }
     } finally {
@@ -1749,8 +1766,8 @@ elPceSubmit?.addEventListener("click", () => {
         });
       }
       closePackageCoverEditDialog();
-      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
-      if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId === id) {
+      if (state && uiShell === "packages" && isPackagesGridTab()) renderPackagesGrid();
+      if (state && uiShell === "content" && uiAdminPackageId === id && isPackagesGridTab()) {
         applyThemeForPackage(findPackageById(id) ?? null);
       }
     } finally {
@@ -1779,7 +1796,7 @@ elChannelAssignOk?.addEventListener("click", () => {
     }
     closeChannelAssignDialog();
     renderPackageChannelList();
-    if (state && uiShell === "packages" && uiTab === "live") {
+    if (state && uiShell === "packages" && isPackagesGridTab()) {
       renderPackagesGrid();
     }
   })();
@@ -1837,7 +1854,7 @@ elAddChannelsSubmit?.addEventListener("click", () => {
     } else {
       closeAddChannelsToPackageDialog();
       renderPackageChannelList();
-      if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
+      if (state && uiShell === "packages" && isPackagesGridTab()) renderPackagesGrid();
     }
   })();
 });
