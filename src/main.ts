@@ -64,6 +64,7 @@ import {
   extractPresetFromImageUrlCached,
   invalidatePackageImageThemeCache,
 } from "./packageImageTheme";
+import { applyVeloraShellBgToMain } from "./veloraShellBackground";
 
 type ServerInfo = {
   url: string;
@@ -172,6 +173,9 @@ const elBtnBackHome = $("#btn-back-home") as HTMLButtonElement;
 const elTabLive = $("#tab-live") as HTMLButtonElement;
 const elTabMovies = $("#tab-movies") as HTMLButtonElement;
 const elTabSeries = $("#tab-series") as HTMLButtonElement;
+
+applyVeloraShellBgToMain(elMain);
+window.addEventListener("velora-shell-bg-changed", () => applyVeloraShellBgToMain(elMain));
 
 type PillId = string;
 
@@ -1063,6 +1067,7 @@ window.addEventListener("velora-admin-session-changed", () => {
 });
 
 window.addEventListener("velora-settings-closed", () => {
+  applyVeloraShellBgToMain(elMain);
   if (state) {
     void (async () => {
       await fetchAndApplyCanonicalCountries();

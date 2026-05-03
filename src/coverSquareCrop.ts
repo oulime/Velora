@@ -1,6 +1,6 @@
 /**
  * Square export for package covers: image fits entirely inside the square (letterbox / pillarbox),
- * empty bands filled with a user-chosen color. Optional zoom + pan for a tighter crop when desired.
+ * empty bands filled with solid color, linear gradient, or transparency (PNG). Optional zoom + pan.
  */
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
@@ -8,7 +8,8 @@ const VIEW_CSS = 300;
 const EXPORT_MAX = 960;
 const JPEG_QUALITY_START = 0.9;
 const DEFAULT_FILL = "#141118";
-/** 1 = image entière « contain » dans le carré ; sous 1 = dézoom (marges remplies par la couleur des bandes). */
+const DEFAULT_GRADIENT_END = "#3d2a55";
+/** 1 = image entière « contain » dans le carré ; sous 1 = dézoom (marges remplies par le fond choisi). */
 const ZOOM_MIN = 0.35;
 const ZOOM_MAX = 3;
 
@@ -16,12 +17,19 @@ const elDialog = document.getElementById("dialog-cover-square-crop") as HTMLDial
 const elCanvas = document.getElementById("crop-sq-canvas") as HTMLCanvasElement | null;
 const elViewport = document.getElementById("crop-sq-viewport") as HTMLDivElement | null;
 const elZoom = document.getElementById("crop-sq-zoom") as HTMLInputElement | null;
+const elFillMode = document.getElementById("crop-sq-fill-mode") as HTMLSelectElement | null;
 const elFill = document.getElementById("crop-sq-fill") as HTMLInputElement | null;
+const elFillEnd = document.getElementById("crop-sq-fill-end") as HTMLInputElement | null;
+const elGradientAngle = document.getElementById("crop-sq-gradient-angle") as HTMLInputElement | null;
+const elGradientAngleVal = document.getElementById("crop-sq-gradient-angle-val") as HTMLSpanElement | null;
+const elSolidRow = document.getElementById("crop-sq-fill-solid-row") as HTMLDivElement | null;
+const elGradientRow = document.getElementById("crop-sq-fill-gradient-row") as HTMLDivElement | null;
 const elCancel = document.getElementById("crop-sq-cancel") as HTMLButtonElement | null;
 const elApply = document.getElementById("crop-sq-apply") as HTMLButtonElement | null;
 const elErr = document.getElementById("crop-sq-err") as HTMLParagraphElement | null;
 
 type Source = ImageBitmap | HTMLImageElement;
+type FillMode = "solid" | "gradient" | "transparent";
 
 let finish: ((file: File | null) => void) | null = null;
 let source: Source | null = null;
@@ -30,6 +38,32 @@ let pendingSourceFileName = "cover.jpg";
 /** Bumped when a new crop session supersedes or closes; stale async loads ignore results. */
 let cropGeneration = 0;
 let letterboxFillHex = DEFAULT_FILL;
+
+function readFillMode(): FillMode {
+  const v = elFillMode?.value?.trim();
+  if (v === "gradient" || v === "transparent") return v;
+  return "solid";
+}
+
+function readGradientAngleDeg(): number {
+  const n = Number(elGradientAngle?.value);
+  return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 145;
+}
+
+function readGradientEndHex(): string {
+  const v = elFillEnd?.value?.trim();
+  return v && /^#[0-9a-f]{6}$/i.test(v) ? v : DEFAULT_GRADIENT_END;
+}
+
+function syncFillControlRows(): void {
+  const mode = readFillMode();
+  elSolidRow?.classList.toggle("hidden", mode !== "solid");
+  elGradientRow?.classList.toggle("hidden", mode !== "gradient");
+}
+
+function syncAngleLabel(): void {
+  if (elGradientAngleVal) elGradientAngleVal.textContent = `${Math.round(readGradientAngleDeg())}°`;
+}
 
 function discardStale(s: Source): void {
   if ("close" in s && typeof (s as ImageBitmap).close === "function") {
@@ -52,7 +86,6 @@ let py = 0;
 let zoom = 1;
 let drag: { sx: number; sy: number; spx: number; spy: number } | null = null;
 
-/** Smallest scale so the full image fits inside the square (contain). */
 function baseScaleContain(): number {
   return Math.min(VIEW_CSS / iw, VIEW_CSS / ih);
 }
@@ -69,7 +102,6 @@ function imgH(): number {
   return ih * scale();
 }
 
-/** Keep the full image inside the viewport (no accidental crop) for any zoom. */
 function clampPanContain(): void {
   const W = imgW();
   const H = imgH();
@@ -103,6 +135,49 @@ function setZoomClamped(z: number, anchorScreenX: number, anchorScreenY: number)
   px = anchorScreenX - fx * iw * newS;
   py = anchorScreenY - fy * ih * newS;
   clampPanContain();
+}
+
+function drawCheckerboard(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  const c1 = "#1c1a24";
+  const c2 = "#121018";
+  const cell = 10;
+  for (let yi = 0; yi * cell < h; yi++) {
+    for (let xi = 0; xi * cell < w; xi++) {
+      ctx.fillStyle = (xi + yi) % 2 === 0 ? c1 : c2;
+      ctx.fillRect(
+        x + xi * cell,
+        y + yi * cell,
+        Math.min(cell, w - xi * cell),
+        Math.min(cell, h - yi * cell)
+      );
+    }
+  }
+}
+
+function fillLetterboxBackground(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const mode = readFillMode();
+  if (mode === "transparent") {
+    drawCheckerboard(ctx, 0, 0, w, h);
+    return;
+  }
+  if (mode === "gradient") {
+    const rad = (readGradientAngleDeg() * Math.PI) / 180;
+    const cx = w / 2;
+    const cy = h / 2;
+    const len = Math.hypot(w, h) / 2;
+    const x0 = cx - Math.cos(rad) * len;
+    const y0 = cy - Math.sin(rad) * len;
+    const x1 = cx + Math.cos(rad) * len;
+    const y1 = cy + Math.sin(rad) * len;
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, letterboxFillHex || DEFAULT_FILL);
+    g.addColorStop(1, readGradientEndHex());
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    return;
+  }
+  ctx.fillStyle = letterboxFillHex || DEFAULT_FILL;
+  ctx.fillRect(0, 0, w, h);
 }
 
 async function loadSource(file: File): Promise<Source> {
@@ -154,30 +229,47 @@ function render(): void {
   elCanvas.style.width = "100%";
   elCanvas.style.height = "100%";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = letterboxFillHex;
-  ctx.fillRect(0, 0, VIEW_CSS, VIEW_CSS);
+  fillLetterboxBackground(ctx, VIEW_CSS, VIEW_CSS);
   ctx.drawImage(source, px, py, imgW(), imgH());
   ctx.strokeStyle = "rgba(255,255,255,0.38)";
   ctx.lineWidth = 2;
   ctx.strokeRect(1, 1, VIEW_CSS - 2, VIEW_CSS - 2);
 }
 
-async function exportCroppedJpeg(originalName: string): Promise<File> {
+async function exportCroppedImage(originalName: string): Promise<File> {
   if (!source) throw new Error("no source");
-  let outSize = EXPORT_MAX;
-  let q = JPEG_QUALITY_START;
+  const mode = readFillMode();
+  const W = imgW();
+  const H = imgH();
+  const stem = originalName.replace(/\.[^.]+$/, "") || "cover";
   const oc = document.createElement("canvas");
   const octx = oc.getContext("2d");
   if (!octx) throw new Error("ctx");
-  const fill = letterboxFillHex || DEFAULT_FILL;
-  const W = imgW();
-  const H = imgH();
+
+  if (mode === "transparent") {
+    let outSize = EXPORT_MAX;
+    let blob: Blob | null = null;
+    for (let attempt = 0; attempt < 28; attempt++) {
+      oc.width = outSize;
+      oc.height = outSize;
+      octx.clearRect(0, 0, outSize, outSize);
+      const k = outSize / VIEW_CSS;
+      octx.drawImage(source, 0, 0, iw, ih, px * k, py * k, W * k, H * k);
+      blob = await new Promise<Blob | null>((r) => oc.toBlob(r, "image/png"));
+      if (blob && blob.size <= MAX_UPLOAD_BYTES) break;
+      outSize = Math.max(240, Math.round(outSize * 0.86));
+    }
+    if (!blob || blob.size > MAX_UPLOAD_BYTES) throw new Error("too large");
+    return new File([blob], `${stem}-carre.png`, { type: "image/png" });
+  }
+
+  let outSize = EXPORT_MAX;
+  let q = JPEG_QUALITY_START;
   let blob: Blob | null = null;
   for (let attempt = 0; attempt < 28; attempt++) {
     oc.width = outSize;
     oc.height = outSize;
-    octx.fillStyle = fill;
-    octx.fillRect(0, 0, outSize, outSize);
+    fillLetterboxBackground(octx, outSize, outSize);
     const k = outSize / VIEW_CSS;
     octx.drawImage(source, 0, 0, iw, ih, px * k, py * k, W * k, H * k);
     blob = await new Promise<Blob | null>((r) => oc.toBlob(r, "image/jpeg", q));
@@ -189,7 +281,6 @@ async function exportCroppedJpeg(originalName: string): Promise<File> {
     }
   }
   if (!blob || blob.size > MAX_UPLOAD_BYTES) throw new Error("too large");
-  const stem = originalName.replace(/\.[^.]+$/, "") || "cover";
   return new File([blob], `${stem}-carre.jpg`, { type: "image/jpeg" });
 }
 
@@ -243,8 +334,17 @@ let listenersBound = false;
 function bindUiOnce(): void {
   if (listenersBound) return;
   listenersBound = true;
+  elFillMode?.addEventListener("change", () => {
+    syncFillControlRows();
+    render();
+  });
   elFill?.addEventListener("input", () => {
     letterboxFillHex = elFill.value?.trim() || DEFAULT_FILL;
+    render();
+  });
+  elFillEnd?.addEventListener("input", () => render());
+  elGradientAngle?.addEventListener("input", () => {
+    syncAngleLabel();
     render();
   });
   elZoom?.addEventListener("input", () => {
@@ -258,7 +358,7 @@ function bindUiOnce(): void {
       if (!finish || !source) return;
       elApply.disabled = true;
       try {
-        const file = await exportCroppedJpeg(pendingSourceFileName);
+        const file = await exportCroppedImage(pendingSourceFileName);
         closeSession(file);
       } catch {
         if (elErr) elErr.textContent = "Impossible d’exporter l’image. Réessayez.";
@@ -296,6 +396,9 @@ export function runCoverSquareCrop(file: File): Promise<File | null> {
   pendingSourceFileName = file.name || "cover.jpg";
   letterboxFillHex =
     elFill?.value && /^#[0-9a-f]{6}$/i.test(elFill.value) ? elFill.value : DEFAULT_FILL;
+  if (elFillEnd && !/^#[0-9a-f]{6}$/i.test(elFillEnd.value)) elFillEnd.value = DEFAULT_GRADIENT_END;
+  syncFillControlRows();
+  syncAngleLabel();
   return new Promise<File | null>((resolve) => {
     finish = resolve;
     void (async () => {

@@ -1674,6 +1674,72 @@ a.topbar__admin-link {
   transition: background-color 0.5s ease;
 }
 
+/* Fonds décoratifs (paramètres admin) : calques au-dessus de --vel-bg */
+.main--velora[data-vel-shell-bg] {
+  background-color: var(--vel-bg);
+  background-image: var(--vel-shell-bg-image);
+}
+
+.main--velora[data-vel-shell-bg] .vel-sticky-top {
+  background-color: var(--vel-bg);
+  background-image: var(--vel-shell-bg-image);
+}
+
+.main--velora[data-vel-shell-bg="aurora"] {
+  --vel-shell-bg-image:
+    radial-gradient(ellipse 115% 90% at 16% -18%, rgba(167, 139, 250, 0.45) 0%, transparent 52%),
+    radial-gradient(ellipse 100% 70% at 104% 22%, rgba(56, 189, 248, 0.18) 0%, transparent 50%),
+    radial-gradient(ellipse 70% 55% at 50% 108%, rgba(88, 28, 135, 0.22) 0%, transparent 55%);
+}
+
+.main--velora[data-vel-shell-bg="mesh"] {
+  --vel-shell-bg-image:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.04) 0%, transparent 42%),
+    repeating-linear-gradient(
+      118deg,
+      transparent,
+      transparent 31px,
+      rgba(139, 92, 246, 0.07) 31px,
+      rgba(139, 92, 246, 0.07) 32px
+    ),
+    repeating-linear-gradient(
+      32deg,
+      transparent,
+      transparent 26px,
+      rgba(167, 139, 250, 0.05) 26px,
+      rgba(167, 139, 250, 0.05) 27px
+    ),
+    radial-gradient(ellipse 85% 65% at 50% 100%, rgba(49, 46, 129, 0.35) 0%, transparent 58%);
+}
+
+.main--velora[data-vel-shell-bg="ember"] {
+  --vel-shell-bg-image:
+    radial-gradient(ellipse 90% 75% at 92% 8%, rgba(251, 146, 60, 0.22) 0%, transparent 48%),
+    radial-gradient(ellipse 80% 60% at 8% 95%, rgba(244, 63, 94, 0.14) 0%, transparent 52%),
+    linear-gradient(195deg, rgba(30, 11, 20, 0.65) 0%, transparent 45%);
+}
+
+.main--velora[data-vel-shell-bg="ocean"] {
+  --vel-shell-bg-image:
+    radial-gradient(ellipse 100% 80% at 12% 12%, rgba(45, 212, 191, 0.14) 0%, transparent 50%),
+    radial-gradient(ellipse 90% 70% at 88% 88%, rgba(59, 130, 246, 0.2) 0%, transparent 52%),
+    linear-gradient(168deg, rgba(8, 25, 40, 0.55) 0%, transparent 50%);
+}
+
+.main--velora[data-vel-shell-bg="nocturne"] {
+  --vel-shell-bg-image:
+    radial-gradient(circle at 22% 35%, rgba(255, 255, 255, 0.06) 0%, transparent 0.35%),
+    radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.05) 0%, transparent 0.28%),
+    radial-gradient(circle at 55% 72%, rgba(255, 255, 255, 0.045) 0%, transparent 0.32%),
+    radial-gradient(circle at 40% 12%, rgba(255, 255, 255, 0.04) 0%, transparent 0.25%),
+    radial-gradient(ellipse 120% 90% at 50% -10%, rgba(30, 58, 138, 0.35) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 70% at 100% 100%, rgba(15, 23, 42, 0.55) 0%, transparent 50%);
+}
+
+.vel-shell-bg-select {
+  max-width: min(22rem, 100%);
+}
+
 .main.main--velora:not(.hidden) {
   display: flex;
   /* .main uses overflow:hidden — override so this pane scrolls and sticky works */
@@ -2861,9 +2927,50 @@ a.topbar__admin-link {
 
 .cover-crop-fill {
   display: flex;
-  align-items: center;
-  gap: 0.65rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
   margin-top: 0.85rem;
+}
+
+.cover-crop-fill__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cover-crop-fill__select {
+  width: 100%;
+  max-width: 100%;
+}
+
+.cover-crop-fill-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+
+.cover-crop-fill-row.hidden {
+  display: none !important;
+}
+
+.cover-crop-fill-row--gradient input[type="range"] {
+  flex: 1;
+  min-width: 5rem;
+  max-width: 12rem;
+  accent-color: #8b5cf6;
+}
+
+.cover-crop-fill-row__angle-label {
+  flex-basis: auto;
+}
+
+.cover-crop-fill-row__angle-val {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 2.25rem;
 }
 
 .cover-crop-fill label {

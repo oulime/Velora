@@ -1,5 +1,11 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { clearAdminSession, isAdminSession } from "./adminSession";
+import {
+  readVeloraShellBgPreset,
+  writeVeloraShellBgPreset,
+  type VeloraShellBgPreset,
+  VELORA_SHELL_BG_PRESETS,
+} from "./veloraShellBackground";
 const SETTINGS_PARAM = "settings";
 const SETTINGS_VALUE = "1";
 
@@ -54,6 +60,7 @@ let deniedBackBound = false;
 let settingsControlsBound = false;
 let prefixAdminBound = false;
 let hiddenFiltersAdminBound = false;
+let shellAppearanceBound = false;
 
 function bindDeniedBack(): void {
   if (deniedBackBound) return;
@@ -286,6 +293,22 @@ async function mountSettingsTable(): Promise<void> {
   await loadRows();
   await mountChannelPrefixAdmin(supabase);
   await mountHiddenFiltersAdmin(supabase);
+  mountShellAppearanceControls();
+}
+
+function mountShellAppearanceControls(): void {
+  const sel = document.getElementById("vel-shell-bg-select") as HTMLSelectElement | null;
+  if (!sel) return;
+  sel.value = readVeloraShellBgPreset();
+  if (!shellAppearanceBound) {
+    shellAppearanceBound = true;
+    sel.addEventListener("change", () => {
+      const raw = sel.value.trim();
+      const v = (VELORA_SHELL_BG_PRESETS as readonly string[]).includes(raw) ? (raw as VeloraShellBgPreset) : "default";
+      writeVeloraShellBgPreset(v);
+      window.dispatchEvent(new CustomEvent("velora-shell-bg-changed"));
+    });
+  }
 }
 
 async function mountChannelPrefixAdmin(supabase: SupabaseClient | null): Promise<void> {

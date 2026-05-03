@@ -103,6 +103,25 @@
             </div>
             <div id="hf-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
           </section>
+
+          <section class="panel countries-admin-form vel-shell-bg-panel" style="margin-top: 1.75rem">
+            <h2>Apparence — fond du lecteur</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Dégradés légers par-dessus la couleur de fond du thème (bouquet ou défaut). Visible après
+              enregistrement ou en fermant les paramètres.
+            </p>
+            <div class="field">
+              <label for="vel-shell-bg-select">Style de fond</label>
+              <select id="vel-shell-bg-select" class="admin-add-package-dialog__select vel-shell-bg-select">
+                <option value="default">Défaut — couleur unie (thème)</option>
+                <option value="aurora">Aurore — violet et cyan</option>
+                <option value="mesh">Mesh — grille douce violette</option>
+                <option value="ember">Braise — chaud ambre / rose</option>
+                <option value="ocean">Océan — bleu et sarcelle</option>
+                <option value="nocturne">Nocturne — bleu nuit et halo</option>
+              </select>
+            </div>
+          </section>
         </main>
       </div>
 
@@ -448,9 +467,9 @@
       <div class="admin-add-package-dialog__panel admin-cover-dialog__panel admin-cover-crop-dialog__panel">
         <h2 class="admin-add-package-dialog__title">Recadrer en carré</h2>
         <p class="admin-add-package-dialog__hint">
-          L’image entière tient dans le carré (bandes latérales ou haut / bas si besoin). Choisissez la couleur des
-          bandes : elle remplit aussi l’espace si vous dézoomez. Déplacez, zoomez avant (serré) ou arrière (vue plus
-          large).
+          L’image entière tient dans le carré (bandes si besoin). Fond : couleur unie, dégradé (deux couleurs + angle),
+          ou transparent (aperçu en damier, export PNG). Déplacez et zoomez pour cadrer ; dézoom = marges remplies par
+          le fond choisi.
         </p>
         <div
           id="crop-sq-viewport"
@@ -462,8 +481,25 @@
           <canvas id="crop-sq-canvas" width="300" height="300"></canvas>
         </div>
         <div class="cover-crop-fill">
-          <label for="crop-sq-fill">Couleur des bandes</label>
-          <input type="color" id="crop-sq-fill" value="#141118" title="Fond autour de l’image" />
+          <div class="cover-crop-fill__field">
+            <label for="crop-sq-fill-mode">Fond autour de l’image</label>
+            <select id="crop-sq-fill-mode" class="admin-add-package-dialog__select cover-crop-fill__select">
+              <option value="solid">Couleur unie</option>
+              <option value="gradient">Dégradé</option>
+              <option value="transparent">Invisible (transparence)</option>
+            </select>
+          </div>
+          <div id="crop-sq-fill-solid-row" class="cover-crop-fill-row">
+            <label for="crop-sq-fill">Couleur</label>
+            <input type="color" id="crop-sq-fill" value="#141118" title="Fond autour de l’image" />
+          </div>
+          <div id="crop-sq-fill-gradient-row" class="cover-crop-fill-row cover-crop-fill-row--gradient hidden">
+            <label for="crop-sq-fill-end">Couleur fin</label>
+            <input type="color" id="crop-sq-fill-end" value="#3d2a55" title="Deuxième couleur du dégradé" />
+            <label for="crop-sq-gradient-angle" class="cover-crop-fill-row__angle-label">Angle</label>
+            <input type="range" id="crop-sq-gradient-angle" min="0" max="360" value="145" step="1" title="Angle du dégradé (°)" />
+            <span id="crop-sq-gradient-angle-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">145°</span>
+          </div>
         </div>
         <div class="cover-crop-zoom">
           <label for="crop-sq-zoom">Zoom</label>
