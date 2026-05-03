@@ -4,7 +4,7 @@
  * can omit the sibling file from `/var/task` and cause ERR_MODULE_NOT_FOUND).
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { handleR2PackageCoverRoute } from "./r2PackageCoverShared";
+import { handleR2PackageCoverRoute } from "./r2PackageCoverShared.js";
 
 export const config = {
   api: {
