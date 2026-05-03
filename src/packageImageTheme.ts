@@ -1,12 +1,13 @@
 /**
  * Derive Velora CSS palette from a package hero image (canvas sampling).
- * Uses the same proxy as thumbnails when possible so pixels stay readable (CORS).
+ * Always loads via the app `/proxy` for HTTPS — canvas needs CORS-safe bytes; direct R2 `*.r2.dev`
+ * URLs omit `Access-Control-Allow-Origin`, which breaks `crossOrigin="anonymous"` (repeated console errors).
  */
 
 import type { PresetTheme } from "./packageThemePresets";
-import { imageUrlForDisplay } from "./nodecastCatalog";
+import { proxiedUrl } from "./nodecastCatalog";
 
-const imageThemeCache = new Map<string, PresetTheme>();
+const imageThemeCache = new Map<string, PresetTheme | false>();
 
 function cacheKey(packageId: string, imageUrl: string): string {
   return `${packageId}\0${imageUrl}`;
@@ -204,10 +205,15 @@ function buildPaletteFromAccent(accent: { r: number; g: number; b: number }): Pr
 /**
  * Returns a palette or `null` if the image cannot be read (CORS / decode).
  */
+function imageUrlForThemeSampling(trimmed: string): string {
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+  return proxiedUrl(trimmed);
+}
+
 export async function extractPresetFromImageUrl(imageUrl: string): Promise<PresetTheme | null> {
   const trimmed = imageUrl.trim();
   if (!trimmed) return null;
-  const loadUrl = /^https?:\/\//i.test(trimmed) ? imageUrlForDisplay(trimmed) : trimmed;
+  const loadUrl = imageUrlForThemeSampling(trimmed);
   const img = new Image();
   img.crossOrigin = "anonymous";
   return new Promise((resolve) => {
@@ -236,8 +242,8 @@ export async function extractPresetFromImageUrlCached(
 ): Promise<PresetTheme | null> {
   const k = cacheKey(packageId, imageUrl);
   const hit = imageThemeCache.get(k);
-  if (hit) return hit;
+  if (hit !== undefined) return hit === false ? null : hit;
   const t = await extractPresetFromImageUrl(imageUrl);
-  if (t) imageThemeCache.set(k, t);
+  imageThemeCache.set(k, t ?? false);
   return t;
 }

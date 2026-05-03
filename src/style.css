@@ -1961,6 +1961,7 @@ a.topbar__admin-link {
   flex: 1;
   padding-bottom: 2rem;
   min-height: 0;
+  min-width: 0;
 }
 
 .main--velora .nav-tabs {
@@ -2111,6 +2112,9 @@ a.topbar__admin-link {
 
 #content-view {
   padding: 0 1.25rem;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 #content-view.hidden {
@@ -2264,9 +2268,11 @@ a.topbar__admin-link {
 
 .item-list {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding-bottom: 2rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .media-item {
@@ -2287,6 +2293,7 @@ a.topbar__admin-link {
     background 0.2s ease;
   text-align: left;
   width: 100%;
+  min-width: 0;
   color: inherit;
   font: inherit;
   font-family: Inter, var(--font);
@@ -2361,6 +2368,7 @@ a.topbar__admin-link {
   font-weight: 600;
   line-height: 1.3;
   letter-spacing: -0.015em;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2401,9 +2409,41 @@ a.topbar__admin-link {
   margin: 0;
   font-size: 0.72rem;
   color: var(--vel-muted);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Narrow viewports: bounded width + no gradient clip so ellipsis / line-clamp work reliably. */
+@media (max-width: 640px) {
+  .media-info h4 {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.25;
+  }
+
+  .main--velora .media-item .media-info h4,
+  .main--velora .media-item.selected .media-info h4 {
+    background: none !important;
+    -webkit-background-clip: unset !important;
+    background-clip: unset !important;
+    color: rgba(236, 232, 252, 0.98) !important;
+    -webkit-text-fill-color: unset !important;
+    text-shadow: 0 1px 10px rgba(138, 43, 226, 0.1);
+  }
+
+  .main--velora .media-item.selected .media-info h4 {
+    color: rgba(248, 244, 255, 1) !important;
+  }
+
+  .media-info p {
+    overflow-wrap: anywhere;
+  }
 }
 
 .vel-media-item-row {
@@ -2411,6 +2451,7 @@ a.topbar__admin-link {
   align-items: stretch;
   gap: 6px;
   width: 100%;
+  min-width: 0;
 }
 
 .vel-media-item-row .media-item__main {

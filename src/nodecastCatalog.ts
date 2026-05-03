@@ -46,7 +46,8 @@ export function proxiedUrl(target: string, fromPlaylist?: string): string {
 /**
  * Package / hero images: use `/proxy` for arbitrary HTTPS (IPTV CDNs, etc.).
  * Skip the proxy for **R2 public** `*.r2.dev` URLs — Node's upstream `fetch` to R2 often fails
- * (`TypeError: fetch failed`) while the browser loads the same URL fine.
+ * (`TypeError: fetch failed`) while the browser loads the same URL fine in `<img>` (no CORS needed).
+ * Canvas-based flows (e.g. theme sampling in `packageImageTheme.ts`) still use `proxiedUrl` for R2.
  */
 export function imageUrlForDisplay(href: string): string {
   const t = href.trim();

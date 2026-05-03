@@ -301,7 +301,7 @@ function resolveHeroImageUrlForTheme(pkg: AdminPackage): string | null {
   }
   const o = packageCoverOverrides.get(id)?.trim();
   if (o && /^https?:\/\//i.test(o)) return o;
-  const list = streamsDisplayedForOpenPackage(id);
+  const list = streamsForPackageCoverFallback(id);
   const ch = list.map((s) => resolvedIconUrl(s.stream_icon, st.base)).find(Boolean);
   return ch?.trim() || null;
 }
@@ -796,7 +796,9 @@ function renderPackageChannelList(): void {
     const info = document.createElement("div");
     info.className = "media-info";
     const h4 = document.createElement("h4");
-    h4.textContent = displayChannelName(s.name);
+    const titleText = displayChannelName(s.name);
+    h4.textContent = titleText;
+    h4.title = titleText;
     info.appendChild(h4);
     const epgId = s.epg_channel_id;
     if (typeof epgId === "string" && epgId.trim()) {
@@ -1133,6 +1135,11 @@ function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
   });
 }
 
+/** Icône fallback grille / thème : uniquement des chaînes visibles (hors « Mots masqués — noms »). */
+function streamsForPackageCoverFallback(packageId: string): LiveStream[] {
+  return streamsDisplayedForOpenPackage(packageId).filter((s) => !shouldHideChannelByName(s.name));
+}
+
 async function refreshSupabaseHierarchy(): Promise<void> {
   const sb = getSupabaseClient();
   if (!sb) {
@@ -1334,7 +1341,7 @@ function renderPackagesGrid(): void {
   const pkgs = mergedPackagesForGrid();
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
-    const matched = streamsDisplayedForOpenPackage(pkg.id);
+    const matched = streamsForPackageCoverFallback(pkg.id);
     const channelFirstIcon = matched
       .map((s) => resolvedIconUrl(s.stream_icon, st.base))
       .find(Boolean);
