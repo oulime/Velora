@@ -40,6 +40,23 @@ export function proxiedUrl(target: string, fromPlaylist?: string): string {
   return `${PROXY_PREFIX}?${p.toString()}`;
 }
 
+/**
+ * Package / hero images: use `/proxy` for arbitrary HTTPS (IPTV CDNs, etc.).
+ * Skip the proxy for **R2 public** `*.r2.dev` URLs — Node's upstream `fetch` to R2 often fails
+ * (`TypeError: fetch failed`) while the browser loads the same URL fine.
+ */
+export function imageUrlForDisplay(href: string): string {
+  const t = href.trim();
+  if (!t || !/^https?:\/\//i.test(t)) return t;
+  try {
+    const h = new URL(t).hostname.toLowerCase();
+    if (h.endsWith(".r2.dev")) return t;
+  } catch {
+    /* ignore */
+  }
+  return proxiedUrl(t);
+}
+
 const FETCH_TIMEOUT_MS = 90_000;
 const TRANSCODE_CACHE_MS = 3 * 60 * 1000;
 const transcodePlaylistCache = new Map<string, { expires: number; playlistUrl: string }>();

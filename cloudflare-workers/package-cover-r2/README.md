@@ -6,7 +6,7 @@ Bouquet cover files from the Lumina admin UI can be stored on **Cloudflare R2** 
 
 1. Cloudflare Dashboard → **R2** → Create bucket (e.g. `lumina-package-covers`).
 2. Enable **public access** for that bucket (R2.dev subdomain or a custom domain) so `cover_url` in Supabase is a normal `https://…` image URL.
-3. Copy the public base URL (no trailing slash), e.g. `https://pub-xxxxx.r2.dev`.
+3. Copy the **Public development URL** origin from the bucket settings (no trailing slash), e.g. `https://your-bucket.r2.dev` or `https://pub-xxxxx.r2.dev` as shown in the dashboard. Do **not** use `https://<bucket>.<account_id>.r2.dev` — that host is not valid for HTTPS.
 
 ## 2. Worker
 

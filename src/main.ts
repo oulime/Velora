@@ -29,6 +29,7 @@ import {
   tryNodecastLoginAndLoad,
   resolveNodecastStreamUrl,
   proxiedUrl,
+  imageUrlForDisplay,
   normalizeServerInput,
   sameOrigin,
 } from "./nodecastCatalog";
@@ -39,6 +40,7 @@ import {
   isLikelyUuid,
   matchDbCountryIdByDisplayName,
   uploadPackageCoverFile,
+  isPackageCoverDebugEnabled,
 } from "./supabaseAdminHierarchy";
 import {
   FRANCE_SYNTH_PACKAGES,
@@ -1095,6 +1097,11 @@ function httpsCatalogCoverOverride(packageId: string): string | null {
   return u && /^https?:\/\//i.test(u) ? u : null;
 }
 
+/** See `imageUrlForDisplay` (R2 `*.r2.dev` = direct; other HTTPS = `/proxy`). */
+function packageCoverImageSrc(href: string): string {
+  return imageUrlForDisplay(href);
+}
+
 function appendAddPackageCard(): void {
   const add = document.createElement("button");
   add.type = "button";
@@ -1190,8 +1197,15 @@ function renderPackagesGrid(): void {
         const img = document.createElement("img");
         img.alt = "";
         img.setAttribute("role", "presentation");
-        img.src = cover;
+        img.src = packageCoverImageSrc(cover);
         img.addEventListener("error", () => {
+          if (isPackageCoverDebugEnabled()) {
+            console.warn("[package-cover] grid img error (db package)", {
+              packageId: pkg.id,
+              rawCoverUrl: cover,
+              imgSrc: img.src,
+            });
+          }
           img.remove();
           if (channelFirstIcon) {
             const img2 = document.createElement("img");
@@ -1302,8 +1316,15 @@ function renderPackagesGrid(): void {
       const img = document.createElement("img");
       img.alt = "";
       img.setAttribute("role", "presentation");
-      img.src = httpsOverride;
+      img.src = packageCoverImageSrc(httpsOverride);
       img.addEventListener("error", () => {
+        if (isPackageCoverDebugEnabled()) {
+          console.warn("[package-cover] grid img error (catalog override)", {
+            packageId: pkg.id,
+            rawUrl: httpsOverride,
+            imgSrc: img.src,
+          });
+        }
         img.remove();
         if (channelFirstIcon) appendProxiedIcon(channelFirstIcon, "📡");
         else appendEmoji("📡");
@@ -1614,8 +1635,25 @@ elPceSubmit?.addEventListener("click", () => {
         }
       }
 
+      if (isPackageCoverDebugEnabled()) {
+        console.log("[package-cover] saved to Supabase", {
+          packageId: id,
+          row: isLikelyUuid(id) ? "admin_packages.cover_url" : "admin_package_covers",
+          finalUrl,
+        });
+      }
+
       invalidatePackageImageThemeCache(id);
       await refreshSupabaseHierarchy();
+      if (isPackageCoverDebugEnabled()) {
+        const row = dbAdminPackages.find((p) => p.id === id);
+        const ov = packageCoverOverrides.get(id)?.trim();
+        console.log("[package-cover] after refreshSupabaseHierarchy", {
+          packageId: id,
+          cover_urlFromFetch: row?.cover_url ?? "(no admin_packages row)",
+          overrideFromFetch: ov ?? "(no admin_package_covers row)",
+        });
+      }
       closePackageCoverEditDialog();
       if (state && uiShell === "packages" && uiTab === "live") renderPackagesGrid();
       if (state && uiShell === "content" && uiTab === "live" && uiAdminPackageId === id) {

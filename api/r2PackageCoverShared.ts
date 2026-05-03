@@ -9,6 +9,17 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 const MAX_BYTES = 2 * 1024 * 1024;
 const ROUTE_PREFIX = "/api/r2-package-cover";
 
+function debugPackageCover(env: NodeJS.ProcessEnv): boolean {
+  const v = (env.VITE_DEBUG_PACKAGE_COVER ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+function logDebug(env: NodeJS.ProcessEnv, msg: string, extra?: Record<string, unknown>): void {
+  if (!debugPackageCover(env)) return;
+  if (extra) console.log("[package-cover:r2]", msg, extra);
+  else console.log("[package-cover:r2]", msg);
+}
+
 function corsJsonHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json; charset=utf-8",
@@ -22,6 +33,22 @@ function corsJsonHeaders(): Record<string, string> {
 function sanitizePackagePrefix(packageId: string): string {
   const t = packageId.trim().replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/_+/g, "_");
   return t.length ? t.slice(0, 120) : "pkg";
+}
+
+/**
+ * Multipart `filename` is often UTF-8 bytes mis-decoded as Latin-1 (busboy / clients).
+ * Example: `tÃ©lÃ©chargement (52).jpg` → `téléchargement (52).jpg`
+ */
+function decodeMultipartFilename(name: string): string {
+  const t = (name.trim() || "upload").normalize("NFC");
+  if (!/[ÃÂ]/.test(t)) return t;
+  try {
+    const recovered = Buffer.from(t, "latin1").toString("utf8");
+    if (!recovered.includes("\uFFFD") && recovered.length > 0) return recovered.normalize("NFC");
+  } catch {
+    /* ignore */
+  }
+  return t;
 }
 
 function readEnv(env: NodeJS.ProcessEnv): {
@@ -39,8 +66,10 @@ function readEnv(env: NodeJS.ProcessEnv): {
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) return null;
 
   const explicit = env.R2_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "");
-  const publicBase =
-    explicit || `https://${bucket}.${accountId}.r2.dev`;
+  // `https://{bucket}.{accountId}.r2.dev` is NOT a valid public host (browser: ERR_SSL_VERSION_OR_CIPHER_MISMATCH).
+  // Default matches Cloudflare's usual dev URL: `https://{bucket}.r2.dev` — if yours differs, set R2_PUBLIC_BASE_URL
+  // to the exact origin shown under R2 → bucket → Settings → Public development URL (e.g. https://pub-….r2.dev).
+  const publicBase = explicit || `https://${bucket}.r2.dev`;
 
   const uploadSecrets: string[] = [];
   const bearer = env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET?.trim();
@@ -98,17 +127,31 @@ export async function handleR2PackageCoverRoute(
   }
 
   if (req.method !== "POST") {
+    logDebug(env, "reject non-POST", { method: req.method });
     json(res, 405, { error: "Method not allowed" });
     return;
   }
 
   const cfg = readEnv(env);
   if (!cfg) {
+    logDebug(env, "R2 env incomplete", {
+      hasAccountId: Boolean(env.R2_ACCOUNT_ID?.trim()),
+      hasAccessKey: Boolean(env.R2_ACCESS_KEY_ID?.trim()),
+      hasSecret: Boolean(env.R2_SECRET_ACCESS_KEY?.trim()),
+      hasBucket: Boolean(env.R2_BUCKET_NAME?.trim()),
+    });
     json(res, 503, { error: "R2 is not configured (set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME)." });
     return;
   }
 
+  logDebug(env, "R2 config", {
+    bucket: cfg.bucket,
+    publicBase: cfg.publicBase,
+    authRequired: cfg.uploadSecrets.length > 0,
+  });
+
   if (!authorize(req, cfg.uploadSecrets)) {
+    logDebug(env, "401 missing or wrong bearer / X-Upload-Key");
     json(res, 401, { error: "Unauthorized" });
     return;
   }
@@ -121,11 +164,18 @@ export async function handleR2PackageCoverRoute(
 
   const parsed = await parseMultipart(req, ct);
   if ("error" in parsed) {
+    logDebug(env, "multipart error", { status: parsed.status, error: parsed.error });
     json(res, parsed.status, { error: parsed.error });
     return;
   }
 
   const { fileBuffer, fileName, mime, packageId } = parsed;
+  logDebug(env, "parsed multipart", {
+    packageId,
+    fileName,
+    mime,
+    bytes: fileBuffer.length,
+  });
   const rawExt = (fileName.split(".").pop() || "jpg").toLowerCase();
   const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "jpg";
   const folder = sanitizePackagePrefix(packageId);
@@ -144,12 +194,14 @@ export async function handleR2PackageCoverRoute(
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "R2 put failed";
+    logDebug(env, "PutObject failed", { key, message: msg });
     json(res, 500, { error: msg });
     return;
   }
 
   const pathEnc = key.split("/").map(encodeURIComponent).join("/");
   const url = `${cfg.publicBase}/${pathEnc}`;
+  logDebug(env, "PutObject ok", { key, url });
   json(res, 200, { url });
 }
 
@@ -180,7 +232,7 @@ function parseMultipart(req: IncomingMessage, contentType: string): Promise<Pars
     });
 
     bb.on("file", (_name, file, info) => {
-      fileName = info.filename || "upload";
+      fileName = decodeMultipartFilename(info.filename || "upload");
       mime = info.mimeType || "";
       const chunks: Buffer[] = [];
       file.on("data", (d: Buffer) => {

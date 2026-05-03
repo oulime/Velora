@@ -16,6 +16,8 @@ interface ImportMetaEnv {
   readonly VITE_CLOUDFLARE_COVER_UPLOAD_SECRET?: string;
   /** When "1" or "true", uploads go to same-origin `/api/r2-package-cover` (R2_* env on the server). */
   readonly VITE_R2_COVER_UPLOAD?: string;
+  /** When "1" or "true", logs package-cover upload + grid image load to the browser console (and R2 server route when set in env). */
+  readonly VITE_DEBUG_PACKAGE_COVER?: string;
 }
 
 interface ImportMeta {

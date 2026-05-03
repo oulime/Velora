@@ -44,12 +44,27 @@ function truthyEnvFlag(v: string | undefined): boolean {
   return s === "1" || s === "true" || s === "yes";
 }
 
+/** Set `VITE_DEBUG_PACKAGE_COVER=1` to log cover upload + grid image diagnostics. */
+export function isPackageCoverDebugEnabled(): boolean {
+  return truthyEnvFlag(import.meta.env.VITE_DEBUG_PACKAGE_COVER);
+}
+
+function coverLog(msg: string, extra?: Record<string, unknown>): void {
+  if (!isPackageCoverDebugEnabled()) return;
+  if (extra) console.log("[package-cover]", msg, extra);
+  else console.log("[package-cover]", msg);
+}
+
 async function uploadPackageCoverToCloudflare(
   packageId: string,
   file: File
 ): Promise<{ url: string } | { error: string } | null> {
   const endpoint = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_URL as string | undefined)?.trim();
-  if (!endpoint) return null;
+  if (!endpoint) {
+    coverLog("skip Worker upload (no VITE_CLOUDFLARE_COVER_UPLOAD_URL)");
+    return null;
+  }
+  coverLog("try Worker upload", { packageId, endpoint, fileBytes: file.size });
   const secret = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET as string | undefined)?.trim();
   const fd = new FormData();
   fd.set("file", file);
@@ -59,7 +74,8 @@ async function uploadPackageCoverToCloudflare(
   let res: Response;
   try {
     res = await fetch(endpoint, { method: "POST", body: fd, headers });
-  } catch {
+  } catch (e) {
+    coverLog("Worker upload network error", { message: e instanceof Error ? e.message : String(e) });
     return { error: "Réseau indisponible (upload Cloudflare)." };
   }
   const text = await res.text();
@@ -67,13 +83,16 @@ async function uploadPackageCoverToCloudflare(
   try {
     parsed = (text ? JSON.parse(text) : {}) as { url?: string; error?: string };
   } catch {
+    coverLog("Worker invalid JSON", { status: res.status, textPreview: text.slice(0, 200) });
     return { error: res.ok ? "Réponse serveur invalide." : text || `HTTP ${res.status}` };
   }
   if (!res.ok) {
+    coverLog("Worker upload failed", { status: res.status, error: parsed.error, textPreview: text.slice(0, 200) });
     return { error: parsed.error || text || `Échec upload (${res.status}).` };
   }
   const url = parsed.url?.trim();
   if (!url) return { error: parsed.error || "URL manquante dans la réponse." };
+  coverLog("Worker upload ok", { url });
   return { url };
 }
 
@@ -82,7 +101,11 @@ async function uploadPackageCoverToR2LocalApi(
   packageId: string,
   file: File
 ): Promise<{ url: string } | { error: string } | null> {
-  if (!truthyEnvFlag(import.meta.env.VITE_R2_COVER_UPLOAD)) return null;
+  if (!truthyEnvFlag(import.meta.env.VITE_R2_COVER_UPLOAD)) {
+    coverLog("skip R2 API upload (VITE_R2_COVER_UPLOAD not truthy)");
+    return null;
+  }
+  coverLog("try /api/r2-package-cover", { packageId, fileBytes: file.size });
   const secret = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET as string | undefined)?.trim();
   const fd = new FormData();
   fd.set("file", file);
@@ -92,7 +115,8 @@ async function uploadPackageCoverToR2LocalApi(
   let res: Response;
   try {
     res = await fetch("/api/r2-package-cover", { method: "POST", body: fd, headers });
-  } catch {
+  } catch (e) {
+    coverLog("R2 API upload network error", { message: e instanceof Error ? e.message : String(e) });
     return { error: "Réseau indisponible (upload R2)." };
   }
   const text = await res.text();
@@ -100,13 +124,16 @@ async function uploadPackageCoverToR2LocalApi(
   try {
     parsed = (text ? JSON.parse(text) : {}) as { url?: string; error?: string };
   } catch {
+    coverLog("R2 API invalid JSON", { status: res.status, textPreview: text.slice(0, 200) });
     return { error: res.ok ? "Réponse serveur invalide." : text || `HTTP ${res.status}` };
   }
   if (!res.ok) {
+    coverLog("R2 API upload failed", { status: res.status, error: parsed.error, textPreview: text.slice(0, 200) });
     return { error: parsed.error || text || `Échec upload (${res.status}).` };
   }
   const url = parsed.url?.trim();
   if (!url) return { error: parsed.error || "URL manquante dans la réponse." };
+  coverLog("R2 API upload ok", { url });
   return { url };
 }
 
@@ -116,6 +143,7 @@ export async function uploadPackageCoverFile(
   packageId: string,
   file: File
 ): Promise<{ url: string } | { error: string }> {
+  coverLog("uploadPackageCoverFile start", { packageId, fileBytes: file.size, name: file.name });
   if (file.size > MAX_COVER_BYTES) {
     return { error: "Image trop volumineuse (max 2 Mo)." };
   }
@@ -125,6 +153,7 @@ export async function uploadPackageCoverFile(
   const r2 = await uploadPackageCoverToR2LocalApi(packageId, file);
   if (r2) return r2;
 
+  coverLog("try Supabase Storage", { bucket: PACKAGE_COVERS_BUCKET, packageId });
   const rawExt = (file.name.split(".").pop() || "jpg").toLowerCase();
   const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "jpg";
   const folder = sanitizePackageCoverStoragePrefix(packageId);
@@ -134,10 +163,14 @@ export async function uploadPackageCoverFile(
     upsert: false,
     contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`,
   });
-  if (error) return { error: error.message };
+  if (error) {
+    coverLog("Supabase Storage upload failed", { message: error.message });
+    return { error: error.message };
+  }
   const { data } = sb.storage.from(PACKAGE_COVERS_BUCKET).getPublicUrl(path);
   const url = data.publicUrl;
   if (!url) return { error: "URL publique indisponible." };
+  coverLog("Supabase Storage upload ok", { url });
   return { url };
 }
 

@@ -4,7 +4,7 @@
  */
 
 import type { PresetTheme } from "./packageThemePresets";
-import { proxiedUrl } from "./nodecastCatalog";
+import { imageUrlForDisplay } from "./nodecastCatalog";
 
 const imageThemeCache = new Map<string, PresetTheme>();
 
@@ -207,7 +207,7 @@ function buildPaletteFromAccent(accent: { r: number; g: number; b: number }): Pr
 export async function extractPresetFromImageUrl(imageUrl: string): Promise<PresetTheme | null> {
   const trimmed = imageUrl.trim();
   if (!trimmed) return null;
-  const loadUrl = /^https?:\/\//i.test(trimmed) ? proxiedUrl(trimmed) : trimmed;
+  const loadUrl = /^https?:\/\//i.test(trimmed) ? imageUrlForDisplay(trimmed) : trimmed;
   const img = new Image();
   img.crossOrigin = "anonymous";
   return new Promise((resolve) => {
