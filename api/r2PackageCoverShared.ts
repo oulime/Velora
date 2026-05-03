@@ -3,12 +3,30 @@
  * Used by Vite dev/preview middleware and Vercel `api/r2-package-cover.ts`.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import https from "node:https";
 import { Readable } from "node:stream";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 /** Multipart body can exceed file size (boundaries); keep a hard cap for buffering. */
 const MAX_BODY_BYTES = MAX_BYTES + 512 * 1024;
 const ROUTE_PREFIX = "/api/r2-package-cover";
+
+/** Shared agent for R2 S3 API (TLS 1.2+; avoids odd defaults on some serverless runtimes). */
+const r2S3HttpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 50,
+  minVersion: "TLSv1.2",
+});
+
+function r2S3ApiEndpoint(accountId: string, env: NodeJS.ProcessEnv): string {
+  const explicit = env.R2_S3_ENDPOINT?.trim().replace(/\/+$/, "");
+  if (explicit) return explicit;
+  const j = (env.R2_JURISDICTION ?? "").trim().toLowerCase();
+  if (j === "eu") return `https://${accountId}.eu.r2.cloudflarestorage.com`;
+  if (j === "fedramp") return `https://${accountId}.fedramp.r2.cloudflarestorage.com`;
+  return `https://${accountId}.r2.cloudflarestorage.com`;
+}
 
 function headerString(req: IncomingMessage, name: string): string {
   const v = req.headers[name.toLowerCase()];
@@ -64,6 +82,7 @@ function readEnv(env: NodeJS.ProcessEnv): {
   secretAccessKey: string;
   bucket: string;
   publicBase: string;
+  s3Endpoint: string;
   uploadSecrets: string[];
 } | null {
   const accountId = env.R2_ACCOUNT_ID?.trim();
@@ -71,6 +90,8 @@ function readEnv(env: NodeJS.ProcessEnv): {
   const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim();
   const bucket = env.R2_BUCKET_NAME?.trim();
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) return null;
+
+  const s3Endpoint = r2S3ApiEndpoint(accountId, env);
 
   const explicit = env.R2_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "");
   // `https://{bucket}.{accountId}.r2.dev` is NOT a valid public host (browser: ERR_SSL_VERSION_OR_CIPHER_MISMATCH).
@@ -82,7 +103,7 @@ function readEnv(env: NodeJS.ProcessEnv): {
   const bearer = env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET?.trim();
   if (bearer) uploadSecrets.push(bearer);
 
-  return { accountId, accessKeyId, secretAccessKey, bucket, publicBase, uploadSecrets };
+  return { accountId, accessKeyId, secretAccessKey, bucket, publicBase, s3Endpoint, uploadSecrets };
 }
 
 async function putObjectToR2(
@@ -94,12 +115,17 @@ async function putObjectToR2(
   const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
   const client = new S3Client({
     region: "auto",
-    endpoint: `https://${cfg.accountId}.r2.cloudflarestorage.com`,
+    endpoint: cfg.s3Endpoint,
     credentials: {
       accessKeyId: cfg.accessKeyId,
       secretAccessKey: cfg.secretAccessKey,
     },
     forcePathStyle: true,
+    requestHandler: new NodeHttpHandler({
+      httpsAgent: r2S3HttpsAgent,
+      connectionTimeout: 15_000,
+      socketTimeout: 120_000,
+    }),
   });
   try {
     await client.send(
@@ -182,6 +208,7 @@ export async function handleR2PackageCoverRoute(
     logDebug(env, "R2 config", {
       bucket: cfg.bucket,
       publicBase: cfg.publicBase,
+      s3Endpoint: cfg.s3Endpoint,
       authRequired: cfg.uploadSecrets.length > 0,
     });
 
@@ -226,7 +253,7 @@ export async function handleR2PackageCoverRoute(
 
     const put = await putObjectToR2(cfg, key, fileBuffer, contentType);
     if ("error" in put) {
-      logDebug(env, "PutObject failed", { key, message: put.error });
+      logDebug(env, "PutObject failed", { key, s3Endpoint: cfg.s3Endpoint, message: put.error });
       json(res, 500, { error: put.error });
       return;
     }
