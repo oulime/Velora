@@ -2,6 +2,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
+import {
+  handleR2PackageCoverRoute,
+  isR2PackageCoverRoute,
+} from "./api/r2PackageCoverShared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -476,6 +480,29 @@ export default defineConfig(({ mode }) => {
             out = out.replace('class="main main--velora hidden"', 'class="main main--velora"');
             return out;
           },
+        },
+      },
+      {
+        name: "r2-package-cover-upload",
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (!isR2PackageCoverRoute(req.url)) {
+              next();
+              return;
+            }
+            const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
+            void handleR2PackageCoverRoute(req, res, merged);
+          });
+        },
+        configurePreviewServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (!isR2PackageCoverRoute(req.url)) {
+              next();
+              return;
+            }
+            const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
+            void handleR2PackageCoverRoute(req, res, merged);
+          });
         },
       },
       {

@@ -7,6 +7,9 @@
   "functions": {
     "api/proxy.ts": {
       "maxDuration": 60
+    },
+    "api/r2-package-cover.ts": {
+      "maxDuration": 30
     }
   }
 }

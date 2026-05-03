@@ -14,6 +14,8 @@ interface ImportMetaEnv {
   readonly VITE_CLOUDFLARE_COVER_UPLOAD_URL?: string;
   /** Bearer token for the Worker; must match Worker secret UPLOAD_SECRET. */
   readonly VITE_CLOUDFLARE_COVER_UPLOAD_SECRET?: string;
+  /** When "1" or "true", uploads go to same-origin `/api/r2-package-cover` (R2_* env on the server). */
+  readonly VITE_R2_COVER_UPLOAD?: string;
 }
 
 interface ImportMeta {

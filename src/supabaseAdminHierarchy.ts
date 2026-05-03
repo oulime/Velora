@@ -38,6 +38,12 @@ export function sanitizePackageCoverStoragePrefix(packageId: string): string {
   return t.length ? t.slice(0, 120) : "pkg";
 }
 
+function truthyEnvFlag(v: string | undefined): boolean {
+  if (!v) return false;
+  const s = v.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
+
 async function uploadPackageCoverToCloudflare(
   packageId: string,
   file: File
@@ -71,6 +77,39 @@ async function uploadPackageCoverToCloudflare(
   return { url };
 }
 
+/** Same-origin `/api/r2-package-cover` (Vite dev / Vercel) when `VITE_R2_COVER_UPLOAD` is set; uses R2_* on the server. */
+async function uploadPackageCoverToR2LocalApi(
+  packageId: string,
+  file: File
+): Promise<{ url: string } | { error: string } | null> {
+  if (!truthyEnvFlag(import.meta.env.VITE_R2_COVER_UPLOAD)) return null;
+  const secret = (import.meta.env.VITE_CLOUDFLARE_COVER_UPLOAD_SECRET as string | undefined)?.trim();
+  const fd = new FormData();
+  fd.set("file", file);
+  fd.set("packageId", packageId);
+  const headers: HeadersInit = {};
+  if (secret) headers.Authorization = `Bearer ${secret}`;
+  let res: Response;
+  try {
+    res = await fetch("/api/r2-package-cover", { method: "POST", body: fd, headers });
+  } catch {
+    return { error: "Réseau indisponible (upload R2)." };
+  }
+  const text = await res.text();
+  let parsed: { url?: string; error?: string };
+  try {
+    parsed = (text ? JSON.parse(text) : {}) as { url?: string; error?: string };
+  } catch {
+    return { error: res.ok ? "Réponse serveur invalide." : text || `HTTP ${res.status}` };
+  }
+  if (!res.ok) {
+    return { error: parsed.error || text || `Échec upload (${res.status}).` };
+  }
+  const url = parsed.url?.trim();
+  if (!url) return { error: parsed.error || "URL manquante dans la réponse." };
+  return { url };
+}
+
 /** Upload a cover file; returns public URL or an error message. */
 export async function uploadPackageCoverFile(
   sb: SupabaseClient,
@@ -82,6 +121,9 @@ export async function uploadPackageCoverFile(
   }
   const cf = await uploadPackageCoverToCloudflare(packageId, file);
   if (cf) return cf;
+
+  const r2 = await uploadPackageCoverToR2LocalApi(packageId, file);
+  if (r2) return r2;
 
   const rawExt = (file.name.split(".").pop() || "jpg").toLowerCase();
   const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "jpg";

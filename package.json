@@ -12,13 +12,17 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
+    "@types/node": "^25.6.0",
     "@vercel/node": "^5.0.0",
     "cross-env": "^7.0.3",
     "typescript": "~5.6.3",
     "vite": "^6.0.1"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1041.0",
     "@supabase/supabase-js": "^2.49.1",
+    "busboy": "^1.6.0",
     "hls.js": "^1.5.7"
   }
 }
