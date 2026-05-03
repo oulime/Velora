@@ -176,7 +176,7 @@
                 title="Paramètres (admin)"
                 aria-label="Paramètres administrateur"
               >
-                Paramètres
+                P
               </button>
               <div id="vel-admin-tools-wrap" class="vel-admin-tools-wrap hidden">
                 <label class="vel-admin-tools" title="Afficher ou masquer le + et la suppression des bouquets Supabase">
@@ -184,7 +184,7 @@
                     <input type="checkbox" id="toggle-admin-ui" role="switch" aria-checked="true" />
                     <span class="vel-admin-tools__track" aria-hidden="true"></span>
                   </span>
-                  <span class="vel-admin-tools__text">Outils</span>
+
                 </label>
               </div>
               <select id="country-select" class="country-select" aria-label="Pays"></select>
@@ -440,7 +440,8 @@
       <div class="admin-add-package-dialog__panel admin-cover-dialog__panel admin-cover-crop-dialog__panel">
         <h2 class="admin-add-package-dialog__title">Recadrer en carré</h2>
         <p class="admin-add-package-dialog__hint">
-          Glissez pour repositionner l’image. Molette ou curseur pour zoomer. La zone visible est un carré.
+          L’image entière tient dans le carré (bandes latérales ou haut / bas si besoin). Choisissez la couleur des
+          bandes, puis déplacez ou zoomez si vous voulez un cadrage plus serré.
         </p>
         <div
           id="crop-sq-viewport"
@@ -450,6 +451,10 @@
           aria-label="Aperçu du recadrage carré"
         >
           <canvas id="crop-sq-canvas" width="300" height="300"></canvas>
+        </div>
+        <div class="cover-crop-fill">
+          <label for="crop-sq-fill">Couleur des bandes</label>
+          <input type="color" id="crop-sq-fill" value="#141118" title="Fond autour de l’image" />
         </div>
         <div class="cover-crop-zoom">
           <label for="crop-sq-zoom">Zoom</label>

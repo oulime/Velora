@@ -2736,11 +2736,44 @@ a.topbar__admin-link {
   height: 100%;
 }
 
-.cover-crop-zoom {
+.cover-crop-fill {
   display: flex;
   align-items: center;
   gap: 0.65rem;
   margin-top: 0.85rem;
+}
+
+.cover-crop-fill label {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cover-crop-fill input[type="color"] {
+  width: 3rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.cover-crop-fill input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 3px;
+}
+
+.cover-crop-fill input[type="color"]::-webkit-color-swatch {
+  border-radius: 6px;
+  border: none;
+}
+
+.cover-crop-zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.65rem;
 }
 
 .cover-crop-zoom label {

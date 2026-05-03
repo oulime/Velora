@@ -1,16 +1,19 @@
 /**
- * Square crop step for package cover uploads (pan + zoom, then JPEG export).
+ * Square export for package covers: image fits entirely inside the square (letterbox / pillarbox),
+ * empty bands filled with a user-chosen color. Optional zoom + pan for a tighter crop when desired.
  */
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const VIEW_CSS = 300;
 const EXPORT_MAX = 960;
 const JPEG_QUALITY_START = 0.9;
+const DEFAULT_FILL = "#141118";
 
 const elDialog = document.getElementById("dialog-cover-square-crop") as HTMLDialogElement | null;
 const elCanvas = document.getElementById("crop-sq-canvas") as HTMLCanvasElement | null;
 const elViewport = document.getElementById("crop-sq-viewport") as HTMLDivElement | null;
 const elZoom = document.getElementById("crop-sq-zoom") as HTMLInputElement | null;
+const elFill = document.getElementById("crop-sq-fill") as HTMLInputElement | null;
 const elCancel = document.getElementById("crop-sq-cancel") as HTMLButtonElement | null;
 const elApply = document.getElementById("crop-sq-apply") as HTMLButtonElement | null;
 const elErr = document.getElementById("crop-sq-err") as HTMLParagraphElement | null;
@@ -23,6 +26,7 @@ let revokeObjectUrl: string | null = null;
 let pendingSourceFileName = "cover.jpg";
 /** Bumped when a new crop session supersedes or closes; stale async loads ignore results. */
 let cropGeneration = 0;
+let letterboxFillHex = DEFAULT_FILL;
 
 function discardStale(s: Source): void {
   if ("close" in s && typeof (s as ImageBitmap).close === "function") {
@@ -45,12 +49,13 @@ let py = 0;
 let zoom = 1;
 let drag: { sx: number; sy: number; spx: number; spy: number } | null = null;
 
-function baseScale(): number {
-  return Math.max(VIEW_CSS / iw, VIEW_CSS / ih);
+/** Smallest scale so the full image fits inside the square (contain). */
+function baseScaleContain(): number {
+  return Math.min(VIEW_CSS / iw, VIEW_CSS / ih);
 }
 
 function scale(): number {
-  return baseScale() * zoom;
+  return baseScaleContain() * zoom;
 }
 
 function imgW(): number {
@@ -61,17 +66,22 @@ function imgH(): number {
   return ih * scale();
 }
 
-function clampPan(): void {
+/** Keep the full image inside the viewport (no accidental crop) for any zoom. */
+function clampPanContain(): void {
   const W = imgW();
   const H = imgH();
-  px = Math.min(0, Math.max(VIEW_CSS - W, px));
-  py = Math.min(0, Math.max(VIEW_CSS - H, py));
+  const minPx = Math.min(0, VIEW_CSS - W);
+  const maxPx = Math.max(0, VIEW_CSS - W);
+  px = Math.min(maxPx, Math.max(minPx, px));
+  const minPy = Math.min(0, VIEW_CSS - H);
+  const maxPy = Math.max(0, VIEW_CSS - H);
+  py = Math.min(maxPy, Math.max(minPy, py));
 }
 
 function centerImage(): void {
   px = (VIEW_CSS - imgW()) / 2;
   py = (VIEW_CSS - imgH()) / 2;
-  clampPan();
+  clampPanContain();
 }
 
 function setZoomClamped(z: number, anchorScreenX: number, anchorScreenY: number): void {
@@ -82,14 +92,14 @@ function setZoomClamped(z: number, anchorScreenX: number, anchorScreenY: number)
   zoom = nz;
   const newS = scale();
   if (oldS === newS) {
-    clampPan();
+    clampPanContain();
     return;
   }
   const fx = (anchorScreenX - oldPx) / (iw * oldS);
   const fy = (anchorScreenY - oldPy) / (ih * oldS);
   px = anchorScreenX - fx * iw * newS;
   py = anchorScreenY - fy * ih * newS;
-  clampPan();
+  clampPanContain();
 }
 
 async function loadSource(file: File): Promise<Source> {
@@ -141,7 +151,7 @@ function render(): void {
   elCanvas.style.width = "100%";
   elCanvas.style.height = "100%";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#08060f";
+  ctx.fillStyle = letterboxFillHex;
   ctx.fillRect(0, 0, VIEW_CSS, VIEW_CSS);
   ctx.drawImage(source, px, py, imgW(), imgH());
   ctx.strokeStyle = "rgba(255,255,255,0.38)";
@@ -149,35 +159,24 @@ function render(): void {
   ctx.strokeRect(1, 1, VIEW_CSS - 2, VIEW_CSS - 2);
 }
 
-function cropLengthInSource(): number {
-  return VIEW_CSS / scale();
-}
-
-function cropOriginInSource(): { x: number; y: number } {
-  const W = imgW();
-  const H = imgH();
-  const L = cropLengthInSource();
-  let ix = ((0 - px) / W) * iw;
-  let iy = ((0 - py) / H) * ih;
-  ix = Math.max(0, Math.min(iw - L, ix));
-  iy = Math.max(0, Math.min(ih - L, iy));
-  return { x: ix, y: iy };
-}
-
 async function exportCroppedJpeg(originalName: string): Promise<File> {
   if (!source) throw new Error("no source");
-  const L = cropLengthInSource();
-  const { x: ix, y: iy } = cropOriginInSource();
-  let outSize = Math.min(EXPORT_MAX, Math.max(2, Math.round(L)));
+  let outSize = EXPORT_MAX;
   let q = JPEG_QUALITY_START;
   const oc = document.createElement("canvas");
   const octx = oc.getContext("2d");
   if (!octx) throw new Error("ctx");
+  const fill = letterboxFillHex || DEFAULT_FILL;
+  const W = imgW();
+  const H = imgH();
   let blob: Blob | null = null;
   for (let attempt = 0; attempt < 28; attempt++) {
     oc.width = outSize;
     oc.height = outSize;
-    octx.drawImage(source, ix, iy, L, L, 0, 0, outSize, outSize);
+    octx.fillStyle = fill;
+    octx.fillRect(0, 0, outSize, outSize);
+    const k = outSize / VIEW_CSS;
+    octx.drawImage(source, 0, 0, iw, ih, px * k, py * k, W * k, H * k);
     blob = await new Promise<Blob | null>((r) => oc.toBlob(r, "image/jpeg", q));
     if (blob && blob.size <= MAX_UPLOAD_BYTES) break;
     if (q > 0.48) q -= 0.06;
@@ -213,7 +212,7 @@ function onPointerMove(e: PointerEvent): void {
   const sc = readCanvasScale();
   px = drag.spx + (e.clientX - drag.sx) * sc;
   py = drag.spy + (e.clientY - drag.sy) * sc;
-  clampPan();
+  clampPanContain();
   render();
 }
 
@@ -241,6 +240,10 @@ let listenersBound = false;
 function bindUiOnce(): void {
   if (listenersBound) return;
   listenersBound = true;
+  elFill?.addEventListener("input", () => {
+    letterboxFillHex = elFill.value?.trim() || DEFAULT_FILL;
+    render();
+  });
   elZoom?.addEventListener("input", () => {
     const v = Number(elZoom?.value) / 100;
     setZoomClamped(Number.isFinite(v) ? v : 1, VIEW_CSS / 2, VIEW_CSS / 2);
@@ -288,6 +291,8 @@ export function runCoverSquareCrop(file: File): Promise<File | null> {
   cropGeneration++;
   const myGen = cropGeneration;
   pendingSourceFileName = file.name || "cover.jpg";
+  letterboxFillHex =
+    elFill?.value && /^#[0-9a-f]{6}$/i.test(elFill.value) ? elFill.value : DEFAULT_FILL;
   return new Promise<File | null>((resolve) => {
     finish = resolve;
     void (async () => {
@@ -312,6 +317,7 @@ export function runCoverSquareCrop(file: File): Promise<File | null> {
         zoom = 1;
         centerImage();
         if (elZoom) elZoom.value = "100";
+        if (elFill && !/^#[0-9a-f]{6}$/i.test(elFill.value)) elFill.value = DEFAULT_FILL;
         if (elApply) elApply.disabled = false;
         render();
       } catch {
