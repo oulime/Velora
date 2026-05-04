@@ -2385,6 +2385,189 @@ a.topbar__admin-link {
   color: rgba(220, 214, 242, 0.88);
 }
 
+.vel-vod-detail__episodes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.vel-vod-detail__episode {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 20rem;
+  text-align: left;
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(248, 245, 255, 0.96);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.vel-vod-detail__episode:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.vel-vod-detail__episode-badge {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.22rem 0.45rem;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.28);
+  color: #ede9fe;
+}
+
+.vel-vod-detail__episode-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+}
+
+.vel-vod-detail__episode-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vel-vod-detail__episode-meta {
+  font-size: 0.72rem;
+  color: rgba(186, 180, 210, 0.85);
+}
+
+.vel-vod-detail__episodes--skeleton {
+  min-height: 11rem;
+}
+
+.vel-vod-detail__episode-skeleton {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 20rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.035);
+  pointer-events: none;
+}
+
+.vel-vod-detail__episode-skeleton__badge {
+  width: 2.75rem;
+  height: 1.05rem;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.14) 45%,
+    rgba(255, 255, 255, 0.05) 90%
+  );
+  background-size: 220% 100%;
+  animation: vel-episode-skel-shimmer 1.35s ease-in-out infinite;
+}
+
+.vel-vod-detail__episode-skeleton__lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  padding-top: 0.08rem;
+}
+
+.vel-vod-detail__episode-skeleton__line {
+  height: 0.52rem;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.11) 45%,
+    rgba(255, 255, 255, 0.04) 90%
+  );
+  background-size: 220% 100%;
+  animation: vel-episode-skel-shimmer 1.35s ease-in-out infinite;
+}
+
+.vel-vod-detail__episode-skeleton__line--long {
+  width: 88%;
+}
+
+.vel-vod-detail__episode-skeleton__line--short {
+  width: 44%;
+  animation-delay: 0.1s;
+}
+
+.vel-vod-detail__episode-skeleton:nth-child(2) .vel-vod-detail__episode-skeleton__badge,
+.vel-vod-detail__episode-skeleton:nth-child(2) .vel-vod-detail__episode-skeleton__line {
+  animation-delay: 0.12s;
+}
+
+.vel-vod-detail__episode-skeleton:nth-child(3) .vel-vod-detail__episode-skeleton__badge,
+.vel-vod-detail__episode-skeleton:nth-child(3) .vel-vod-detail__episode-skeleton__line {
+  animation-delay: 0.24s;
+}
+
+@keyframes vel-episode-skel-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.vel-vod-detail__episodes-empty {
+  margin: 0;
+  max-width: 20rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: rgba(186, 180, 210, 0.82);
+}
+
+.vel-vod-detail__episodes-section--ready .vel-vod-detail__episodes:not(.vel-vod-detail__episodes--skeleton) {
+  animation: vel-episodes-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes vel-episodes-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vel-vod-detail__episode-skeleton__badge,
+  .vel-vod-detail__episode-skeleton__line {
+    animation: none;
+    background: rgba(255, 255, 255, 0.08);
+    background-size: 100% 100%;
+  }
+
+  .vel-vod-detail__episodes-section--ready .vel-vod-detail__episodes:not(.vel-vod-detail__episodes--skeleton) {
+    animation: none;
+  }
+}
+
 .vel-vod-detail__watch {
   margin-top: 0.5rem;
   width: 100%;
@@ -2750,6 +2933,10 @@ a.topbar__admin-link {
 #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__section,
 #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__cast,
 #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__director {
+  max-width: none;
+}
+
+#dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__episode {
   max-width: none;
 }
 

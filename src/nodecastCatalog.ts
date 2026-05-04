@@ -19,6 +19,11 @@ export type LiveStream = {
   nodecast_source_id?: string;
   /** Xtream via Nodecast: VOD movie / series row (playback URL differs from live). */
   nodecast_media?: "live" | "vod" | "series";
+  /**
+   * Xtream episode stream id: Nodecast expects `/api/proxy/xtream/.../stream/{id}/series` (not only movie/vod).
+   * Set when launching playback from `series_info` episode rows (see HAR: `.../stream/1384176/series?container=mp4`).
+   */
+  nodecast_series_episode?: boolean;
   /** VOD row: container from panel (e.g. mp4) for `/movie/{id}.{ext}` proxy paths. */
   container_extension?: string;
   /** Liste `vod_streams` (panel Xtream) : note TMDB-style et note /5. */
@@ -1409,7 +1414,18 @@ export async function resolveNodecastVodStreamUrl(
   }
 
   const candidates: string[] = [];
+  const seriesEpisode = Boolean(s.nodecast_series_episode);
   const ext = (s.container_extension ?? "").trim().toLowerCase();
+  if (seriesEpisode) {
+    if (ext && /^[a-z0-9]+$/.test(ext)) {
+      candidates.push(`${b}/api/proxy/xtream/${sid}/stream/${streamId}/series?container=${ext}`);
+    }
+    const streamContainers = ["m3u8", "mp4", "mkv", "ts"] as const;
+    for (const c of streamContainers) {
+      candidates.push(`${b}/api/proxy/xtream/${sid}/stream/${streamId}/series?container=${c}`);
+    }
+    candidates.push(`${b}/api/proxy/xtream/${sid}/stream/${streamId}/series`);
+  }
   if (ext && /^[a-z0-9]+$/.test(ext)) {
     candidates.push(
       `${b}/api/proxy/xtream/${sid}/stream/${streamId}/movie?container=${ext}`,
@@ -1444,28 +1460,90 @@ export async function resolveNodecastVodStreamUrl(
   return tryResolveVodFromGetInfo(b, sid, streamId, s, authHeaders);
 }
 
-function extractFirstEpisodeStreamId(payload: unknown): number | null {
+function readEpisodesObjectFromSeriesPayload(payload: unknown): Record<string, unknown> | null {
   if (!payload || typeof payload !== "object") return null;
   const root = payload as Record<string, unknown>;
   const data = root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
   const eps = data.episodes;
-  if (eps && typeof eps === "object" && !Array.isArray(eps)) {
-    const seasonKeys = Object.keys(eps).sort((a, b) => Number(a) - Number(b));
-    for (const sk of seasonKeys) {
-      const arr = (eps as Record<string, unknown>)[sk];
-      if (!Array.isArray(arr)) continue;
-      for (const ep of arr) {
-        if (!ep || typeof ep !== "object") continue;
-        const e = ep as Record<string, unknown>;
-        const sid = Number(e.stream_id ?? e.id);
-        if (Number.isFinite(sid) && sid > 0) return sid;
-      }
+  if (eps && typeof eps === "object" && !Array.isArray(eps)) return eps as Record<string, unknown>;
+  return null;
+}
+
+function extractFirstEpisodeStreamId(payload: unknown): number | null {
+  const eps = readEpisodesObjectFromSeriesPayload(payload);
+  if (!eps) return null;
+  const seasonKeys = Object.keys(eps).sort((a, b) => Number(a) - Number(b));
+  for (const sk of seasonKeys) {
+    const arr = eps[sk];
+    if (!Array.isArray(arr)) continue;
+    for (const ep of arr) {
+      if (!ep || typeof ep !== "object") continue;
+      const e = ep as Record<string, unknown>;
+      const sid = Number(e.stream_id ?? e.id);
+      if (Number.isFinite(sid) && sid > 0) return sid;
     }
   }
   return null;
 }
 
-/** Resolve first playable episode for a Xtream series (get_series_info → VOD stream). */
+/** Liste plate des épisodes (saisons triées, épisodes triés par `episode_num`). */
+export function extractSeriesEpisodesFromPayload(payload: unknown): SeriesEpisodeListItem[] {
+  const eps = readEpisodesObjectFromSeriesPayload(payload);
+  if (!eps) return [];
+  const out: SeriesEpisodeListItem[] = [];
+  const seasonKeys = Object.keys(eps).sort((a, b) => Number(a) - Number(b));
+  for (const sk of seasonKeys) {
+    const seasonNumFromKey = Number(sk);
+    const arr = eps[sk];
+    if (!Array.isArray(arr)) continue;
+    const sorted = [...arr].sort((a, b) => {
+      const na = Number((a as Record<string, unknown>)?.episode_num ?? (a as Record<string, unknown>)?.episode_number ?? 0);
+      const nb = Number((b as Record<string, unknown>)?.episode_num ?? (b as Record<string, unknown>)?.episode_number ?? 0);
+      return na - nb;
+    });
+    for (const ep of sorted) {
+      if (!ep || typeof ep !== "object") continue;
+      const e = ep as Record<string, unknown>;
+      const rawId = e.stream_id ?? e.id;
+      const episodeStreamId = Number(rawId);
+      if (!Number.isFinite(episodeStreamId) || episodeStreamId <= 0) continue;
+      const episodeNum = Number(e.episode_num ?? e.episode_number ?? 0);
+      const snRaw = e.season;
+      const sn = Number.isFinite(Number(snRaw)) ? Number(snRaw) : seasonNumFromKey;
+      const title =
+        firstNonEmptyString(e.title, e.name) ||
+        (Number.isFinite(episodeNum) ? `Épisode ${episodeNum}` : "Épisode");
+      const infoObj =
+        e.info && typeof e.info === "object" && !Array.isArray(e.info)
+          ? (e.info as Record<string, unknown>)
+          : null;
+      const duration = typeof infoObj?.duration === "string" ? infoObj.duration.trim() : undefined;
+      const extRaw = e.container_extension;
+      const containerExtension =
+        typeof extRaw === "string" && /^[a-z0-9]+$/i.test(extRaw.trim()) ? extRaw.trim().toLowerCase() : undefined;
+      out.push({
+        episodeStreamId,
+        seasonNumber: Number.isFinite(sn) ? sn : seasonNumFromKey,
+        episodeNum: Number.isFinite(episodeNum) ? episodeNum : 0,
+        title,
+        duration,
+        containerExtension,
+      });
+    }
+  }
+  return out;
+}
+
+/** Une entrée d’épisode issue de `series_info` / `get_series_info` (`episodes` par saison). */
+export type SeriesEpisodeListItem = {
+  episodeStreamId: number;
+  seasonNumber: number;
+  episodeNum: number;
+  title: string;
+  duration?: string;
+  containerExtension?: string;
+};
+
 /** Enriched metadata from Xtream `get_vod_info` (when the panel exposes it). */
 export type VodInfoDetails = {
   title: string;
@@ -1476,6 +1554,8 @@ export type VodInfoDetails = {
   ratingDisplay: string;
   backdropUrl: string | null;
   posterUrl: string | null;
+  /** Renseigné pour les séries : parcours `episodes.{seasonNumber}[].id` + métadonnées. */
+  episodes?: SeriesEpisodeListItem[];
 };
 
 function extractInfoObject(payload: unknown): Record<string, unknown> | null {
@@ -1633,7 +1713,8 @@ export async function fetchNodecastSeriesInfo(
     try {
       const payload = await fetchProxiedJsonWithInit<unknown>(u, { headers: authHeaders });
       if (xtreamProxyJsonLooksRejected(payload)) continue;
-      return parseVodInfoFromPayload(payload, fallbackTitle);
+      const details = parseVodInfoFromPayload(payload, fallbackTitle);
+      return { ...details, episodes: extractSeriesEpisodesFromPayload(payload) };
     } catch {
       /* try next URL */
     }
@@ -1666,6 +1747,7 @@ export async function resolveNodecastSeriesPlayableUrl(
         name: "Episode",
         nodecast_source_id: sourceId,
         nodecast_media: "vod",
+        nodecast_series_episode: true,
       };
       return resolveNodecastVodStreamUrl(base, epStream, authHeaders);
     } catch {
