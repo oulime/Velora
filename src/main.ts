@@ -39,6 +39,7 @@ import {
   imageUrlForDisplay,
   normalizeServerInput,
   sameOrigin,
+  type SeriesEpisodeListItem,
 } from "./nodecastCatalog";
 import {
   fetchDbAdminCountries,
@@ -415,9 +416,33 @@ function closePlayerUserAction(): void {
 function closeVodPlayerUserAction(): void {
   activeStreamId = null;
   destroyVodPlayer();
+  syncSeriesEpisodePlaybackHighlight();
   if (state && uiShell === "content" && uiAdminPackageId != null) {
     renderPackageChannelList();
   }
+}
+
+function syncSeriesEpisodePlaybackHighlight(): void {
+  if (!elDynamicList) return;
+  const root = elDynamicList.querySelector(".vel-vod-detail__episodes");
+  if (!root) return;
+  const id = activeStreamId;
+  for (const btn of root.querySelectorAll<HTMLButtonElement>("button.vel-vod-detail__episode")) {
+    const raw = btn.dataset.episodeStreamId;
+    const sid = raw !== undefined ? Number(raw) : NaN;
+    const on = id !== null && Number.isFinite(sid) && sid === id;
+    btn.classList.toggle("vel-vod-detail__episode--playing", on);
+    if (on) btn.setAttribute("aria-current", "true");
+    else btn.removeAttribute("aria-current");
+  }
+}
+
+function uniqueSortedSeasonsFromEpisodes(eps: SeriesEpisodeListItem[]): number[] {
+  const set = new Set<number>();
+  for (const e of eps) {
+    if (Number.isFinite(e.seasonNumber)) set.add(e.seasonNumber);
+  }
+  return [...set].sort((a, b) => a - b);
 }
 
 function setPlayerBufferingVisible(visible: boolean): void {
@@ -1171,7 +1196,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
   const iconHref = resolvedIconUrl(s.stream_icon, st.base);
 
   const wrap = document.createElement("article");
-  wrap.className = "vel-vod-detail";
+  wrap.className = tab === "series" ? "vel-vod-detail vel-vod-detail--series" : "vel-vod-detail";
   wrap.setAttribute("aria-label", streamTitle);
 
   const bg = document.createElement("div");
@@ -1221,6 +1246,8 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
   directorBlock.append(dirH, dirP);
 
   let episodesListEl: HTMLDivElement | null = null;
+  let seasonToolbarEl: HTMLDivElement | null = null;
+  let seasonSelectEl: HTMLSelectElement | null = null;
   if (tab === "series") {
     const episodesSection = document.createElement("section");
     episodesSection.className =
@@ -1229,11 +1256,25 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
     const episodesH = document.createElement("h2");
     episodesH.className = "vel-vod-detail__section-title";
     episodesH.textContent = "Épisodes";
+    const seasonToolbar = document.createElement("div");
+    seasonToolbar.className = "vel-vod-detail__season-toolbar hidden";
+    const seasonLabel = document.createElement("label");
+    seasonLabel.className = "vel-vod-detail__season-label";
+    const seasonSelectId = `vel-series-season-${s.stream_id}`;
+    seasonLabel.htmlFor = seasonSelectId;
+    seasonLabel.textContent = "Saison";
+    const seasonSelect = document.createElement("select");
+    seasonSelect.id = seasonSelectId;
+    seasonSelect.className = "vel-vod-detail__season-select";
+    seasonSelect.setAttribute("aria-label", "Choisir la saison");
+    seasonToolbar.append(seasonLabel, seasonSelect);
+    seasonToolbarEl = seasonToolbar;
+    seasonSelectEl = seasonSelect;
     episodesListEl = document.createElement("div");
     episodesListEl.className = "vel-vod-detail__episodes";
     appendCatalogEpisodesSkeleton(episodesListEl);
-    episodesSection.append(episodesH, episodesListEl);
-    inner.append(titleEl, metaRow, plot, castBlock, directorBlock, episodesSection);
+    episodesSection.append(episodesH, seasonToolbar, episodesListEl);
+    inner.append(titleEl, metaRow, castBlock, directorBlock, episodesSection, plot);
   } else {
     inner.append(titleEl, metaRow, plot, castBlock, directorBlock);
   }
@@ -1245,6 +1286,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
   btnWatch.classList.toggle("hidden", shouldHideCatalogRegarderButton(s, tab));
   btnWatch.addEventListener("click", () => {
     activeStreamId = s.stream_id;
+    if (tab === "series") syncSeriesEpisodePlaybackHighlight();
     btnWatch.classList.add("hidden");
     void (async () => {
       await playStreamByMode(s);
@@ -1331,9 +1373,11 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
       const episodesSection = episodesListEl.parentElement;
       const episodes = info?.episodes ?? [];
       episodesListEl.classList.remove("vel-vod-detail__episodes--skeleton");
-      const fragment = document.createDocumentFragment();
-      if (episodes.length > 0) {
-        for (const ep of episodes) {
+      const seasons = uniqueSortedSeasonsFromEpisodes(episodes);
+
+      const appendEpisodeRows = (eps: SeriesEpisodeListItem[]) => {
+        const fragment = document.createDocumentFragment();
+        for (const ep of eps) {
           const row = document.createElement("button");
           row.type = "button";
           row.className = "vel-vod-detail__episode";
@@ -1354,6 +1398,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
             body.appendChild(meta);
           }
           row.append(badge, body);
+          row.dataset.episodeStreamId = String(ep.episodeStreamId);
           row.addEventListener("click", () => {
             const epStream: LiveStream = {
               stream_id: ep.episodeStreamId,
@@ -1364,21 +1409,67 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
               container_extension: ep.containerExtension,
             };
             activeStreamId = ep.episodeStreamId;
+            syncSeriesEpisodePlaybackHighlight();
             void playStreamByMode(epStream);
             window.scrollTo({ top: 0, behavior: "smooth" });
           });
           fragment.appendChild(row);
         }
+        episodesListEl.replaceChildren(fragment);
+        syncSeriesEpisodePlaybackHighlight();
+      };
+
+      const rebuildForSeason = (seasonNum: number | null) => {
+        const eps =
+          seasonNum == null || !Number.isFinite(seasonNum)
+            ? episodes
+            : episodes.filter((e) => e.seasonNumber === seasonNum);
+        appendEpisodeRows(eps);
+      };
+
+      if (episodes.length > 0) {
+        const playingSeason = episodes.find((e) => e.episodeStreamId === activeStreamId)?.seasonNumber;
+        let selectedSeason: number | null =
+          playingSeason != null && Number.isFinite(playingSeason) && seasons.includes(playingSeason)
+            ? playingSeason
+            : seasons.length > 0
+              ? seasons[0]
+              : null;
+
+        if (seasons.length > 1 && seasonToolbarEl && seasonSelectEl) {
+          seasonToolbarEl.classList.remove("hidden");
+          seasonSelectEl.replaceChildren();
+          for (const sn of seasons) {
+            const opt = document.createElement("option");
+            opt.value = String(sn);
+            opt.textContent = `Saison ${sn}`;
+            seasonSelectEl.appendChild(opt);
+          }
+          if (selectedSeason != null) {
+            seasonSelectEl.value = String(selectedSeason);
+          }
+          seasonSelectEl.onchange = () => {
+            const sn = Number(seasonSelectEl!.value);
+            if (Number.isFinite(sn)) rebuildForSeason(sn);
+          };
+          rebuildForSeason(selectedSeason);
+        } else {
+          seasonToolbarEl?.classList.add("hidden");
+          if (seasonSelectEl) seasonSelectEl.onchange = null;
+          rebuildForSeason(selectedSeason);
+        }
       } else {
+        seasonToolbarEl?.classList.add("hidden");
+        if (seasonSelectEl) seasonSelectEl.onchange = null;
         const empty = document.createElement("p");
         empty.className = "vel-vod-detail__episodes-empty";
         empty.textContent =
           !sid || sid.length === 0
             ? "Catalogue indisponible pour charger les épisodes."
             : "Aucun épisode listé pour cette série.";
-        fragment.appendChild(empty);
+        episodesListEl.replaceChildren(empty);
+        syncSeriesEpisodePlaybackHighlight();
       }
-      episodesListEl.replaceChildren(fragment);
       if (episodesSection) {
         episodesSection.classList.remove("vel-vod-detail__episodes-section--loading");
         episodesSection.setAttribute("aria-busy", "false");
@@ -3068,6 +3159,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
           );
         }
         activeStreamId = null;
+        syncSeriesEpisodePlaybackHighlight();
         return;
       }
       if (!sameOrigin(resolved, state.base)) {
@@ -3077,6 +3169,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
           );
         }
         activeStreamId = null;
+        syncSeriesEpisodePlaybackHighlight();
         return;
       }
       // Liste / autre navigation pendant l’await : ne pas relancer le lecteur.
@@ -3092,6 +3185,10 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
         seriesDetailStream.nodecast_source_id === s.nodecast_source_id &&
         seriesDetailStream.stream_id !== s.stream_id;
       if (!okFilmDetail && !okSeriesEpisode) {
+        if (s.nodecast_series_episode) {
+          activeStreamId = null;
+          syncSeriesEpisodePlaybackHighlight();
+        }
         return;
       }
       s.direct_source = resolved;

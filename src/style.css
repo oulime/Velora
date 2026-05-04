@@ -2385,6 +2385,54 @@ a.topbar__admin-link {
   color: rgba(220, 214, 242, 0.88);
 }
 
+.vel-vod-detail__season-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.65rem;
+  max-width: 20rem;
+}
+
+.vel-vod-detail__season-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: rgba(220, 214, 242, 0.95);
+  flex-shrink: 0;
+}
+
+.vel-vod-detail__season-select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color-scheme: dark;
+  background-color: #16131f;
+  color: #f5f3ff;
+  cursor: pointer;
+}
+
+.vel-vod-detail__season-select option {
+  background-color: #1e1a2a;
+  color: #f5f3ff;
+}
+
+.vel-vod-detail__season-select:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background-color: #1c1828;
+}
+
+.vel-vod-detail__season-select:focus {
+  outline: none;
+  border-color: rgba(167, 139, 250, 0.55);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.22);
+  background-color: #1c1828;
+  color: #f5f3ff;
+}
+
 .vel-vod-detail__episodes {
   display: flex;
   flex-direction: column;
@@ -2413,6 +2461,24 @@ a.topbar__admin-link {
 .vel-vod-detail__episode:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+.vel-vod-detail__episode--playing {
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(139, 92, 246, 0.2);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.28),
+    0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
+.vel-vod-detail__episode--playing:hover {
+  background: rgba(139, 92, 246, 0.26);
+  border-color: rgba(192, 181, 253, 0.5);
+}
+
+.vel-vod-detail__episode--playing .vel-vod-detail__episode-badge {
+  background: rgba(139, 92, 246, 0.45);
+  color: #f5f3ff;
 }
 
 .vel-vod-detail__episode-badge {
@@ -2923,6 +2989,26 @@ a.topbar__admin-link {
 
 #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__title {
   font-size: clamp(1.65rem, 5.5vw, 2.35rem);
+}
+
+/* Fiche série : moins d’espace en tête ; synopsis sous les épisodes (plot en bas). */
+#dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail--series .vel-vod-detail__inner {
+  padding-top: clamp(2.5rem, 11vh, 4.75rem);
+}
+
+#dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail--series .vel-vod-detail__title {
+  margin-bottom: 0.35rem;
+  font-size: clamp(1.32rem, 4.2vw, 1.85rem);
+}
+
+#dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail--series .vel-vod-detail__meta {
+  margin-bottom: 0.6rem;
+}
+
+#dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail--series .vel-vod-detail__plot {
+  margin: 1rem 0 0.35rem;
+  max-width: none;
+  font-size: clamp(0.92rem, 2.8vw, 1.05rem);
 }
 
 #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__plot {
