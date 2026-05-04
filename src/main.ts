@@ -738,15 +738,53 @@ function setLoginStatus(msg: string, isError = false): void {
   elLoginStatus.classList.toggle("error", isError);
 }
 
-function setCatalogLoadingVisible(visible: boolean, statusText?: string): void {
+/** Couleurs d’accent du chargement catalogue : alignées sur DIRECT TV (V), FILMS (I), SÉRIES (P). */
+type CatalogLoadAccent = "live" | "movies" | "series";
+
+const CATALOG_LOAD_PALETTE: Record<
+  CatalogLoadAccent,
+  { primary: string; primarySoft: string; glow: string; phase: string }
+> = {
+  live: {
+    primary: "#7c3aed",
+    primarySoft: "#a78bfa",
+    glow: "rgba(167, 139, 250, 0.48)",
+    phase: "0",
+  },
+  movies: {
+    primary: "#0284c7",
+    primarySoft: "#38bdf8",
+    glow: "rgba(56, 189, 248, 0.48)",
+    phase: "0.08",
+  },
+  series: {
+    primary: "#d97706",
+    primarySoft: "#fbbf24",
+    glow: "rgba(245, 158, 11, 0.48)",
+    phase: "0.16",
+  },
+};
+
+function setCatalogLoadingVisible(
+  visible: boolean,
+  statusText?: string,
+  accent: CatalogLoadAccent = "live"
+): void {
   const el = elCatalogLoadingOverlay;
   if (!el) return;
   if (visible) {
-    if (el.classList.contains("hidden")) {
-      el.style.setProperty("--cat-load-phase", String(Math.random()));
-    }
+    const p = CATALOG_LOAD_PALETTE[accent];
+    el.style.setProperty("--cat-load-primary", p.primary);
+    el.style.setProperty("--cat-load-primary-soft", p.primarySoft);
+    el.style.setProperty("--cat-load-glow", p.glow);
+    el.style.setProperty("--cat-load-phase", p.phase);
+    el.dataset.catLoadAccent = accent;
   } else {
+    el.style.removeProperty("--cat-load-primary");
+    el.style.removeProperty("--cat-load-primary-soft");
+    el.style.removeProperty("--cat-load-glow");
     el.style.removeProperty("--cat-load-phase");
+    delete el.dataset.catLoadAccent;
   }
   if (elCatalogLoadingStatus) {
     if (visible && statusText) {
@@ -3083,7 +3121,7 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
   }
 
   if (tab === "movies" && !state.vodCatalogLoaded) {
-    setCatalogLoadingVisible(true, "Chargement des films…");
+    setCatalogLoadingVisible(true, "Chargement des films…", "movies");
     try {
       const v = await fetchNodecastVodCatalog(state.base, sid, state.nodecastAuthHeaders);
       if (!state) return;
@@ -3105,7 +3143,7 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
     tab === "series" &&
     (!state.seriesCatalogLoaded || countStreamsInMap(state.seriesStreamsByCat) === 0)
   ) {
-    setCatalogLoadingVisible(true, "Chargement des séries…");
+    setCatalogLoadingVisible(true, "Chargement des séries…", "series");
     try {
       const s = await fetchNodecastSeriesCatalog(state.base, sid, state.nodecastAuthHeaders);
       if (!state) return;
@@ -3317,10 +3355,10 @@ async function connect(): Promise<void> {
   setLoginStatus("Connexion à Nodecast…");
 
   try {
-    setCatalogLoadingVisible(true, "Connexion au serveur…");
+    setCatalogLoadingVisible(true, "Connexion au serveur…", "live");
     const mode: "nodecast" = "nodecast";
     const nodecast = await tryNodecastLoginAndLoad(base, username, password);
-    setCatalogLoadingVisible(true, "Préparation de l’accueil…");
+    setCatalogLoadingVisible(true, "Préparation de l’accueil…", "live");
     const streamsByCat = nodecast.streamsByCat;
     const nodecastAuthHeaders = nodecast.authHeaders;
     const serverInfo: ServerInfo = {
