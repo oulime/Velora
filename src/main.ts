@@ -741,6 +741,13 @@ function setLoginStatus(msg: string, isError = false): void {
 function setCatalogLoadingVisible(visible: boolean, statusText?: string): void {
   const el = elCatalogLoadingOverlay;
   if (!el) return;
+  if (visible) {
+    if (el.classList.contains("hidden")) {
+      el.style.setProperty("--cat-load-phase", String(Math.random()));
+    }
+  } else {
+    el.style.removeProperty("--cat-load-phase");
+  }
   if (elCatalogLoadingStatus) {
     if (visible && statusText) {
       elCatalogLoadingStatus.textContent = statusText;
