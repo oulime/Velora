@@ -382,12 +382,31 @@ function destroyPlayer(): void {
     hls.destroy();
     hls = null;
   }
+  elVideo.onerror = null;
   elVideo.removeAttribute("src");
   elVideo.removeAttribute("title");
   elVideo.load();
   elNowPlaying.textContent = "";
   elPlayerContainer.classList.remove("player-container--live-tv");
   showPlayerChrome(false);
+}
+
+/** HLS manifest or Nodecast transcode playlist (not raw MKV/MP4). */
+function urlLooksLikeHls(href: string): boolean {
+  const h = href.toLowerCase();
+  if (/\.m3u8(\?|#|&|$)/i.test(h)) return true;
+  if (/\/api\/transcode\/[^/]+\/stream\.m3u8/i.test(h)) return true;
+  if (/[?&]container=m3u8(?:&|$)/i.test(h)) return true;
+  return false;
+}
+
+/** Progressive file or Xtream `container=` for a file container (native video element, not hls.js). */
+function urlLooksLikeProgressiveMedia(href: string): boolean {
+  if (urlLooksLikeHls(href)) return false;
+  const h = href.toLowerCase();
+  if (/\.(mp4|mkv|webm|mov|avi|m4v)(\?|#|&|$)/i.test(h)) return true;
+  if (/[?&]container=(mkv|mp4|webm|mov|avi|m4v)(?:&|$)/i.test(h)) return true;
+  return false;
 }
 
 function playUrl(
@@ -410,8 +429,23 @@ function playUrl(
       Object.values(upstreamAuth).some((v) => typeof v === "string" && v.trim())
   );
 
+  if (urlLooksLikeProgressiveMedia(url) || urlLooksLikeProgressiveMedia(proxied)) {
+    elVideo.src = proxied;
+    elVideo.onerror = () => {
+      elNowPlaying.innerHTML = nowPlayingErrorMarkup(
+        "Lecture impossible (codec non pris en charge ou flux refusé)."
+      );
+    };
+    void elVideo.play().catch(() => {});
+    return;
+  }
+
   // Native <video> cannot send Authorization; Nodecast transcode/HLS needs Bearer on every segment.
-  if (elVideo.canPlayType("application/vnd.apple.mpegurl") && !hasUpstreamAuth) {
+  if (
+    elVideo.canPlayType("application/vnd.apple.mpegurl") &&
+    !hasUpstreamAuth &&
+    urlLooksLikeHls(url)
+  ) {
     elVideo.src = proxied;
     void elVideo.play().catch(() => {});
     return;

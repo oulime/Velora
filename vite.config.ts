@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import {
@@ -114,6 +116,31 @@ function rewriteM3u8(body: string, playlistUrl: string): string {
 
 type Next = (err?: unknown) => void;
 
+/** Do not forward to client; cookies stay in server-side jar. */
+const PROXY_HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "transfer-encoding",
+  "content-encoding",
+  "set-cookie",
+  "etag",
+  "cache-control",
+  "expires",
+  "last-modified",
+]);
+
+function copyUpstreamHeadersToClient(upstream: Response, res: ServerResponse): void {
+  upstream.headers.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (PROXY_HOP_BY_HOP.has(lk)) return;
+    try {
+      res.setHeader(key, value);
+    } catch {
+      /* ignore invalid header names */
+    }
+  });
+}
+
 /** Avoid :80 / :443 in headers; some CDNs treat them as different from default. */
 function stripDefaultPortHref(url: string): string {
   try {
@@ -217,6 +244,7 @@ function buildUpstreamHeaders(
           /\/player_api(\.php)?$/i.test(targetPath)
         ) {
           // Nodecast panels often reject self-referential API URLs (Referer = same get_* URL → 400).
+          // POST /api/transcode/session: `from` equals `target` via proxiedFullUrl — never send Referer = session URL (500 on some builds).
           referer = stripDefaultPortHref(`${target.origin}/`);
         } else {
           referer = stripDefaultPortHref(from.href);
@@ -315,8 +343,12 @@ function proxyMiddleware() {
     }
 
     const debug = proxyDebugMode();
+    const upstreamMsRaw = Number(process.env.XTREAM_PROXY_UPSTREAM_MS);
+    const upstreamMs = Number.isFinite(upstreamMsRaw)
+      ? Math.min(Math.max(upstreamMsRaw, 5_000), 900_000)
+      : 120_000;
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 60_000);
+    const t = setTimeout(() => ac.abort(), upstreamMs);
     const { headers: outHeaders, referer, origin } = buildUpstreamHeaders(
       req,
       q,
@@ -381,8 +413,6 @@ function proxyMiddleware() {
       ingestUpstreamSetCookies(upstream, q);
       const ct =
         upstream.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-      const buf = Buffer.from(await upstream.arrayBuffer());
-
       const isM3u8Rewrite =
         upstream.ok &&
         (ct === "application/vnd.apple.mpegurl" ||
@@ -390,6 +420,7 @@ function proxyMiddleware() {
           q.toLowerCase().includes(".m3u8"));
 
       if (isM3u8Rewrite) {
+        const buf = Buffer.from(await upstream.arrayBuffer());
         const dirKey = hlsTokenDirKey(q);
         if (dirKey) {
           upstreamSession.lastM3u8ByHlsDir.set(
@@ -397,19 +428,34 @@ function proxyMiddleware() {
             stripDefaultPortHref(q)
           );
         }
-      }
-
-      if (debug === "all") {
-        logProxy("info", "upstream", {
-          status: upstream.status,
-          ok: upstream.ok,
-          contentType: ct || "(empty)",
-          bytes: buf.length,
-          target: maskUrlForLog(q),
-        });
+        if (debug === "all") {
+          logProxy("info", "upstream", {
+            status: upstream.status,
+            ok: upstream.ok,
+            contentType: ct || "(empty)",
+            bytes: buf.length,
+            target: maskUrlForLog(q),
+          });
+        }
+        const text = buf.toString("utf8");
+        const rewritten = rewriteM3u8(text, q);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+        res.end(rewritten);
+        return;
       }
 
       if (!upstream.ok) {
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        if (debug === "all") {
+          logProxy("info", "upstream", {
+            status: upstream.status,
+            ok: upstream.ok,
+            contentType: ct || "(empty)",
+            bytes: buf.length,
+            target: maskUrlForLog(q),
+          });
+        }
         const textProbe = buf.slice(0, 800).toString("utf8");
         const looksBinary = /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(textProbe);
         const isTranscode =
@@ -440,24 +486,59 @@ function proxyMiddleware() {
         if (srv) {
           logProxy("warn", "upstream-server-header", { server: srv });
         }
-      }
-
-      if (isM3u8Rewrite) {
-        const text = buf.toString("utf8");
-        const rewritten = rewriteM3u8(text, q);
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        res.end(rewritten);
+        res.statusCode = upstream.status;
+        if (ct) res.setHeader("Content-Type", ct);
+        res.end(buf);
         return;
       }
 
+      if (
+        upstream.status === 204 ||
+        upstream.status === 304 ||
+        method === "HEAD" ||
+        !upstream.body
+      ) {
+        res.statusCode = upstream.status;
+        copyUpstreamHeadersToClient(upstream, res);
+        res.end();
+        return;
+      }
+
+      if (debug === "all") {
+        logProxy("info", "upstream", {
+          status: upstream.status,
+          ok: upstream.ok,
+          contentType: ct || "(empty)",
+          bytes: "(streaming)",
+          target: maskUrlForLog(q),
+        });
+      }
+
+      res.once("close", () => {
+        try {
+          ac.abort();
+        } catch {
+          /* ignore */
+        }
+      });
       res.statusCode = upstream.status;
-      if (ct) res.setHeader("Content-Type", ct);
-      res.end(buf);
+      copyUpstreamHeadersToClient(upstream, res);
+      const webBody = upstream.body as import("stream/web").ReadableStream<Uint8Array>;
+      const nodeReadable = Readable.fromWeb(webBody);
+      await pipeline(nodeReadable, res);
     } catch (e) {
+      if (res.headersSent) {
+        try {
+          res.destroy?.();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      const sec = Math.round(upstreamMs / 1000);
       const msg =
         e instanceof Error && e.name === "AbortError"
-          ? "Upstream request timed out (60s)."
+          ? `Upstream request timed out (${sec}s). Set XTREAM_PROXY_UPSTREAM_MS to adjust.`
           : e instanceof Error
             ? e.message
             : "Proxy error";

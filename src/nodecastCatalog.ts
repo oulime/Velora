@@ -346,6 +346,19 @@ function isLikelyM3u8Body(text: string): boolean {
   return text.trimStart().startsWith("#EXTM3U");
 }
 
+function cancelFetchResponseBody(r: Response): void {
+  try {
+    void r.body?.cancel();
+  } catch {
+    /* ignore */
+  }
+}
+
+function hrefLooksLikeProgressiveContainer(href: string): boolean {
+  const s = innermostHttpStreamTarget(href);
+  return /\.(mp4|mkv|webm|mov|avi|m4v)(\?|#|&|$)/i.test(s);
+}
+
 const NODECAST_SETTINGS_CACHE_MS = 5 * 60 * 1000;
 let nodecastProbeUaCache: { base: string; ua: string; exp: number } | null = null;
 
@@ -506,6 +519,7 @@ async function resolveCandidateToPlayableUrl(
       !ct.includes("mpegurl") &&
       !ct.includes("x-mpegurl")
     ) {
+      cancelFetchResponseBody(r);
       return c;
     }
     if (ct.includes("application/octet-stream")) {
@@ -516,6 +530,7 @@ async function resolveCandidateToPlayableUrl(
           c
         )
       ) {
+        cancelFetchResponseBody(r);
         return c;
       }
     }
@@ -542,8 +557,13 @@ async function resolveCandidateToPlayableUrl(
             : new URL(extractedAbs, candidateUrl);
           if (extractedUrl.origin !== candidateUrl.origin) {
             const nodecastOrigin = `${candidateUrl.protocol}//${candidateUrl.host}`;
-            const viaProxy = buildNodecastProxyStreamPlaylistUrl(nodecastOrigin, extractedUrl.href);
-            const playable = await resolveCandidateToPlayableUrl(viaProxy, headers);
+            const viaProxyInner = buildNodecastProxyStreamPlaylistUrl(nodecastOrigin, extractedUrl.href);
+            if (hrefLooksLikeProgressiveContainer(extractedUrl.href)) {
+              const t = await createNodecastTranscodeUrl(nodecastOrigin, extractedUrl.href, headers);
+              if (t) return t;
+              return await resolveCandidateToPlayableUrl(viaProxyInner, headers);
+            }
+            const playable = await resolveCandidateToPlayableUrl(viaProxyInner, headers);
             if (playable) return playable;
             return await createNodecastTranscodeUrl(nodecastOrigin, extractedUrl.href, headers);
           }
@@ -661,6 +681,8 @@ function collectXtreamSourceIdsFromStatus(payload: unknown): string[] {
   for (const item of arr) {
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
+    const err = o.error;
+    if (typeof err === "string" && err.trim()) continue;
     const status = String(o.status ?? "").toLowerCase();
     if (status && status !== "success") continue;
     const id = String(o.source_id ?? o.sourceId ?? o.id ?? "").trim();
@@ -1214,6 +1236,15 @@ async function resolvePlaybackHrefViaNodecast(
     return resolveCandidateToPlayableUrl(extracted.href, headers);
   }
   const viaProxy = buildNodecastProxyStreamPlaylistUrl(b, extracted.href);
+  const progressive = hrefLooksLikeProgressiveContainer(extracted.href);
+  /* MKV/MP4 through Nodecast /api/proxy/stream often 500s (CDN terminate, incompatible codecs).
+     Prefer transcode first for file containers; never return viaProxy after both paths fail
+     (that would replay the same broken URL in <video>). */
+  if (progressive) {
+    const transcodedFirst = await createNodecastTranscodeUrl(b, extracted.href, headers);
+    if (transcodedFirst) return transcodedFirst;
+    return resolveCandidateToPlayableUrl(viaProxy, headers);
+  }
   const proxiedPlayable = await resolveCandidateToPlayableUrl(viaProxy, headers);
   if (proxiedPlayable) return proxiedPlayable;
   return createNodecastTranscodeUrl(b, extracted.href, headers);
