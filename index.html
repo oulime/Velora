@@ -185,7 +185,11 @@
       <main class="main main--velora hidden" id="main">
         <div class="vel-sticky-top">
           <header class="vel-header">
-            <div class="vel-brand">Velora<span>VIP</span></div>
+            <div class="vel-brand">
+              Velora<span class="vel-brand-vip"
+                ><span class="vel-brand-vip__v">V</span><span class="vel-brand-vip__i">I</span
+                ><span class="vel-brand-vip__p">P</span></span>
+            </div>
             <div class="vel-header__right">
               <button
                 type="button"
@@ -279,13 +283,13 @@
 
         <div class="vel-body">
           <div class="nav-tabs" id="main-tabs" role="tablist">
-            <button type="button" class="tab active" id="tab-live" data-tab="live" role="tab">
+            <button type="button" class="tab tab--vip-v active" id="tab-live" data-tab="live" role="tab">
               DIRECT TV
             </button>
-            <button type="button" class="tab" id="tab-movies" data-tab="movies" role="tab">
+            <button type="button" class="tab tab--vip-i" id="tab-movies" data-tab="movies" role="tab">
               FILMS
             </button>
-            <button type="button" class="tab" id="tab-series" data-tab="series" role="tab">
+            <button type="button" class="tab tab--vip-p" id="tab-series" data-tab="series" role="tab">
               SÉRIES
             </button>
           </div>
@@ -341,7 +345,9 @@
             </div>
           </div>
           <p class="catalog-loading-overlay__brand">
-            Velora<span>VIP</span>
+            Velora<span class="vel-brand-vip"
+              ><span class="vel-brand-vip__v">V</span><span class="vel-brand-vip__i">I</span
+              ><span class="vel-brand-vip__p">P</span></span>
           </p>
           <p id="catalog-loading-status" class="catalog-loading-overlay__status">Chargement du catalogue…</p>
           <div class="catalog-loading-overlay__eq" aria-hidden="true">

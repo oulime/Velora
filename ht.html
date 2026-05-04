@@ -17,7 +17,11 @@
       <main class="main main--velora" id="main">
         <div class="vel-sticky-top">
           <header class="vel-header">
-            <div class="vel-brand">Velora<span>VIP</span></div>
+            <div class="vel-brand">
+            Velora<span class="vel-brand-vip"
+              ><span class="vel-brand-vip__v">V</span><span class="vel-brand-vip__i">I</span
+              ><span class="vel-brand-vip__p">P</span></span>
+          </div>
             <div class="vel-header__right"></div>
           </header>
         </div>
@@ -26,7 +30,7 @@
           <div class="nav-tabs hidden" id="main-tabs" role="tablist" aria-label="Navigation principale">
             <button
               type="button"
-              class="tab"
+              class="tab tab--vip-v"
               id="tab-live"
               data-tab="live"
               role="tab"
@@ -37,7 +41,7 @@
             </button>
             <button
               type="button"
-              class="tab active"
+              class="tab tab--vip-i active"
               id="tab-movies"
               data-tab="movies"
               role="tab"
@@ -48,7 +52,7 @@
             </button>
             <button
               type="button"
-              class="tab"
+              class="tab tab--vip-p"
               id="tab-series"
               data-tab="series"
               role="tab"
