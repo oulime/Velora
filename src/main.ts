@@ -408,6 +408,8 @@ function showVodPlayerChrome(show: boolean): void {
 function closePlayerUserAction(): void {
   activeStreamId = null;
   destroyPlayer();
+  syncSeriesEpisodePlaybackHighlight();
+  syncSeriesDetailEpisodePlayingLayout();
   if (state && uiShell === "content" && uiAdminPackageId != null) {
     renderPackageChannelList();
   }
@@ -417,24 +419,52 @@ function closeVodPlayerUserAction(): void {
   activeStreamId = null;
   destroyVodPlayer();
   syncSeriesEpisodePlaybackHighlight();
+  syncSeriesDetailEpisodePlayingLayout();
   if (state && uiShell === "content" && uiAdminPackageId != null) {
     renderPackageChannelList();
   }
 }
 
+/** Réordonne la fiche série (épisodes + saison en tête) pendant la lecture d’un épisode VOD. */
+function syncSeriesDetailEpisodePlayingLayout(): void {
+  const detail = elDynamicList?.querySelector<HTMLElement>(".vel-vod-detail--series");
+  if (!detail) return;
+  const seriesRow = seriesDetailStream;
+  const inSeriesDetail = uiTab === "series" && seriesUiPhase === "detail" && seriesRow != null;
+  if (!inSeriesDetail) {
+    detail.classList.remove("vel-vod-detail--episode-playing");
+    return;
+  }
+  const id = activeStreamId;
+  const episodeIds = new Set<number>();
+  detail.querySelectorAll<HTMLButtonElement>("button.vel-vod-detail__episode[data-episode-stream-id]").forEach((btn) => {
+    const n = Number(btn.dataset.episodeStreamId);
+    if (Number.isFinite(n)) episodeIds.add(n);
+  });
+  const vodShown =
+    elVodPlayerContainer != null && !elVodPlayerContainer.classList.contains("hidden");
+  const seriesRowPlaying = id != null && id === seriesRow.stream_id;
+  const rowInList = id != null && episodeIds.has(id);
+  const playingEpisode =
+    id != null && !seriesRowPlaying && (vodShown || rowInList);
+  detail.classList.toggle("vel-vod-detail--episode-playing", playingEpisode);
+}
+
 function syncSeriesEpisodePlaybackHighlight(): void {
   if (!elDynamicList) return;
   const root = elDynamicList.querySelector(".vel-vod-detail__episodes");
-  if (!root) return;
-  const id = activeStreamId;
-  for (const btn of root.querySelectorAll<HTMLButtonElement>("button.vel-vod-detail__episode")) {
-    const raw = btn.dataset.episodeStreamId;
-    const sid = raw !== undefined ? Number(raw) : NaN;
-    const on = id !== null && Number.isFinite(sid) && sid === id;
-    btn.classList.toggle("vel-vod-detail__episode--playing", on);
-    if (on) btn.setAttribute("aria-current", "true");
-    else btn.removeAttribute("aria-current");
+  if (root) {
+    const id = activeStreamId;
+    for (const btn of root.querySelectorAll<HTMLButtonElement>("button.vel-vod-detail__episode")) {
+      const raw = btn.dataset.episodeStreamId;
+      const sid = raw !== undefined ? Number(raw) : NaN;
+      const on = id !== null && Number.isFinite(sid) && sid === id;
+      btn.classList.toggle("vel-vod-detail__episode--playing", on);
+      if (on) btn.setAttribute("aria-current", "true");
+      else btn.removeAttribute("aria-current");
+    }
   }
+  syncSeriesDetailEpisodePlayingLayout();
 }
 
 function uniqueSortedSeasonsFromEpisodes(eps: SeriesEpisodeListItem[]): number[] {
@@ -2350,6 +2380,7 @@ function openAdminPackage(packageId: string): void {
   vodDetailStream = null;
   seriesUiPhase = "list";
   seriesDetailStream = null;
+  activeStreamId = null;
   destroyVodPlayer();
   uiShell = "content";
   uiTab = tab;
@@ -2359,10 +2390,14 @@ function openAdminPackage(packageId: string): void {
   elPackagesView.classList.add("hidden");
   elMainTabs.classList.add("hidden");
   elContentView.classList.remove("hidden");
+  elContentView.classList.remove("content-view--vod-film-detail");
+  elDynamicList.classList.remove("item-list--vod-film-detail");
   selectedPillId = "all";
   syncPillDefsForPackage(packageId);
   renderCategoryPills();
   updatePillsVisibility();
+  renderPackageChannelList();
+  syncCatalogBackButtonLabel();
   syncAdminAddChannelsButton();
   syncPlayerDismissOverlay();
 }
@@ -2388,6 +2423,7 @@ function showPackagesShell(): void {
   selectedPillId = "all";
   syncAdminAddChannelsButton();
   if (state) renderPackagesGrid();
+  syncCatalogBackButtonLabel();
   syncPlayerDismissOverlay();
 }
 
@@ -3193,6 +3229,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
       }
       s.direct_source = resolved;
       playVodUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders);
+      syncSeriesEpisodePlaybackHighlight();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -3436,7 +3473,7 @@ elBtnBackHome.addEventListener("click", () => {
   if (uiTab === "series" && seriesUiPhase === "detail" && uiShell === "content") {
     seriesUiPhase = "list";
     seriesDetailStream = null;
-    closePlayerUserAction();
+    closeVodPlayerUserAction();
     syncCatalogBackButtonLabel();
     return;
   }
