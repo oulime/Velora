@@ -58,6 +58,11 @@ import {
   listStreamsForOpenedPackage,
 } from "./franceStreamCuration";
 import { fetchDbStreamCurations, upsertStreamCuration } from "./channelCurationSupabase";
+import { applySavedOrder, mergeVisibleReorder } from "./packageChannelOrder";
+import {
+  fetchDbPackageChannelOrders,
+  upsertPackageChannelOrder,
+} from "./packageChannelOrderSupabase";
 import {
   clearPackageCoverImageKeepingThemes,
   fetchDbPackageCoverOverrides,
@@ -224,8 +229,11 @@ let dbAdminPackages: AdminPackage[] = [];
 let streamCurationByCountry: Map<string, Map<number, string>> = new Map();
 /** `package_id` (fournisseur ou velagg:…) → image + couleurs hors `admin_packages`. */
 let packageCoverOverrideById: Map<string, PackageCoverOverrideEntry> = new Map();
+/** `${country_id or cat:…}::${package_id}` → manual live channel order (stream_id sequence). */
+let packageChannelOrderByKey: Map<string, number[]> = new Map();
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
+const PKG_CHANNEL_ORDER_LS_PREFIX = "velora_pkg_ch_order_v1";
 /** When `"0"`, hide + / Supabase delete in the grid (admin session only). Default = visible. */
 const ADMIN_GRID_TOOLS_KEY = "velora_admin_grid_tools";
 /** Same id as `providerLayout` « Autres » bucket — keep last in the list. */
@@ -1622,6 +1630,11 @@ function renderPackageChannelList(): void {
   elDynamicList.classList.remove("item-list--vod-vertical", "item-list--vod-film-detail");
   elContentView.classList.remove("content-view--vod-film-detail");
 
+  const pkgIdForDrag = uiAdminPackageId;
+  const alphaIdsForDrag =
+    pkgIdForDrag != null ? liveStreamsAlphaForPackage(pkgIdForDrag).map((x) => x.stream_id) : [];
+  const visibleIdSetForDrag = new Set(filtered.map((x) => x.stream_id));
+
   for (const s of filtered) {
     const row = document.createElement("div");
     row.className = "vel-media-item-row";
@@ -1680,6 +1693,86 @@ function renderPackageChannelList(): void {
       showPlayerChrome(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
+
+    if (adminTools && pkgIdForDrag != null) {
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.className = "vel-channel-drag-handle";
+      handle.title = "Glisser pour réorganiser";
+      handle.setAttribute("aria-label", "Réorganiser la chaîne");
+      const grip = document.createElement("span");
+      grip.className = "vel-channel-drag-handle__grip";
+      grip.setAttribute("aria-hidden", "true");
+      grip.textContent = "⠿";
+      handle.appendChild(grip);
+
+      let allowDrag = false;
+      handle.addEventListener("mousedown", () => {
+        allowDrag = true;
+      });
+      handle.addEventListener("mouseup", () => {
+        allowDrag = false;
+      });
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        if (!allowDrag) {
+          e.preventDefault();
+          return;
+        }
+        allowDrag = false;
+        row.classList.add("vel-media-item-row--dragging");
+        e.dataTransfer?.setData("text/plain", String(s.stream_id));
+        e.dataTransfer?.setData("application/x-velora-stream-id", String(s.stream_id));
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("vel-media-item-row--dragging");
+        elDynamicList.querySelectorAll(".vel-media-item-row--drop-target").forEach((el) => {
+          el.classList.remove("vel-media-item-row--drop-target");
+        });
+      });
+      row.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const rect = row.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        row.classList.add("vel-media-item-row--drop-target");
+        row.dataset.dropBefore = before ? "1" : "0";
+      });
+      row.addEventListener("dragleave", (e) => {
+        const rel = e.relatedTarget as Node | null;
+        if (rel && row.contains(rel)) return;
+        row.classList.remove("vel-media-item-row--drop-target");
+        delete row.dataset.dropBefore;
+      });
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.classList.remove("vel-media-item-row--drop-target");
+        const raw = e.dataTransfer?.getData("text/plain") || e.dataTransfer?.getData("application/x-velora-stream-id");
+        const draggedId = Number(raw);
+        if (!Number.isFinite(draggedId) || !pkgIdForDrag) return;
+        const rect = row.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        delete row.dataset.dropBefore;
+        const rows = [
+          ...elDynamicList.querySelectorAll<HTMLElement>(".vel-media-item-row[data-stream-id]"),
+        ];
+        const visibleIds = rows.map((r) => Number(r.dataset.streamId)).filter(Number.isFinite);
+        const fromIdx = visibleIds.indexOf(draggedId);
+        const toIdx = visibleIds.indexOf(Number(row.dataset.streamId));
+        if (fromIdx < 0 || toIdx < 0) return;
+        const newVisibleOrder = reorderVisibleStreamIds(visibleIds, fromIdx, toIdx, before);
+        const prevSaved = getPackageChannelOrder(pkgIdForDrag);
+        const fullOrder = prevSaved?.length ? prevSaved : [...alphaIdsForDrag];
+        const merged = mergeVisibleReorder(fullOrder, visibleIdSetForDrag, newVisibleOrder);
+        void (async () => {
+          await persistPackageChannelOrder(pkgIdForDrag, merged);
+          renderPackageChannelList();
+        })();
+      });
+
+      row.appendChild(handle);
+    }
 
     row.appendChild(btn);
 
@@ -1988,14 +2081,42 @@ function curationMapForSelection(): Map<number, string> | null {
   return streamCurationByCountry.get(cid) ?? new Map();
 }
 
-function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
+function packageChannelOrderMapKey(packageId: string): string {
+  const db = resolvedDbCountryIdForAdminPackages();
+  const scope = db ?? `cat:${selectedAdminCountryId ?? "default"}`;
+  return `${scope}::${packageId}`;
+}
+
+function loadPackageChannelOrderFromLocalStorage(mapKey: string): number[] | null {
+  try {
+    const raw = localStorage.getItem(`${PKG_CHANNEL_ORDER_LS_PREFIX}:${mapKey}`);
+    if (!raw) return null;
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return null;
+    return arr.map((x) => Number(x)).filter(Number.isFinite);
+  } catch {
+    return null;
+  }
+}
+
+function savePackageChannelOrderToLocalStorage(mapKey: string, ids: number[]): void {
+  try {
+    localStorage.setItem(`${PKG_CHANNEL_ORDER_LS_PREFIX}:${mapKey}`, JSON.stringify(ids));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getPackageChannelOrder(packageId: string): number[] | null {
+  const key = packageChannelOrderMapKey(packageId);
+  const fromMap = packageChannelOrderByKey.get(key);
+  if (fromMap?.length) return fromMap;
+  return loadPackageChannelOrderFromLocalStorage(key);
+}
+
+/** Alphabetical live streams for a package (no manual order). */
+function liveStreamsAlphaForPackage(packageId: string): LiveStream[] {
   if (!state) return [];
-  if (uiTab === "movies") {
-    return state.vodStreamsByCat.get(String(packageId)) ?? [];
-  }
-  if (uiTab === "series") {
-    return state.seriesStreamsByCat.get(String(packageId)) ?? [];
-  }
   return listStreamsForOpenedPackage({
     packageId,
     streamsByCatAll: state.streamsByCatAll,
@@ -2004,6 +2125,51 @@ function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
     isLikelyUuidPackage: isLikelyUuid,
     curationForSelectedDbCountry: curationMapForSelection(),
   });
+}
+
+async function persistPackageChannelOrder(packageId: string, streamIds: number[]): Promise<void> {
+  const mapKey = packageChannelOrderMapKey(packageId);
+  packageChannelOrderByKey.set(mapKey, streamIds);
+  savePackageChannelOrderToLocalStorage(mapKey, streamIds);
+  console.log("[Velora] Channel order saved", { packageId, streamIds });
+  const sb = getSupabaseClient();
+  if (!sb) return;
+  let cid = resolvedDbCountryIdForAdminPackages();
+  if (!cid) {
+    cid = await ensureSupabaseCountryForSelection();
+  }
+  if (!cid) return;
+  const res = await upsertPackageChannelOrder(sb, {
+    country_id: cid,
+    package_id: packageId,
+    stream_order: streamIds,
+  });
+  if (res.error) {
+    flashCurateStatus(`Ordre des chaînes (local OK) — Supabase : ${res.error}`, true);
+  } else {
+    flashCurateStatus("Ordre des chaînes enregistré.", false);
+  }
+}
+
+function reorderVisibleStreamIds(ids: number[], fromIdx: number, toIdx: number, insertBefore: boolean): number[] {
+  const next = [...ids];
+  const [moved] = next.splice(fromIdx, 1);
+  let ins = insertBefore ? toIdx : toIdx + 1;
+  if (fromIdx < ins) ins--;
+  next.splice(ins, 0, moved);
+  return next;
+}
+
+function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
+  if (!state) return [];
+  if (uiTab === "movies") {
+    return state.vodStreamsByCat.get(String(packageId)) ?? [];
+  }
+  if (uiTab === "series") {
+    return state.seriesStreamsByCat.get(String(packageId)) ?? [];
+  }
+  const raw = liveStreamsAlphaForPackage(packageId);
+  return applySavedOrder(raw, getPackageChannelOrder(packageId));
 }
 
 /** Icône fallback grille / thème : uniquement des chaînes visibles (hors « Mots masqués — noms »). */
@@ -2018,6 +2184,7 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     dbAdminPackages = [];
     streamCurationByCountry = new Map();
     packageCoverOverrideById = new Map();
+    packageChannelOrderByKey = new Map();
     populateCountrySelectFromAdmin();
     return;
   }
@@ -2035,11 +2202,17 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     } catch {
       packageCoverOverrideById = new Map();
     }
+    try {
+      packageChannelOrderByKey = await fetchDbPackageChannelOrders(sb);
+    } catch {
+      packageChannelOrderByKey = new Map();
+    }
   } catch {
     dbAdminCountries = [];
     dbAdminPackages = [];
     streamCurationByCountry = new Map();
     packageCoverOverrideById = new Map();
+    packageChannelOrderByKey = new Map();
   }
   populateCountrySelectFromAdmin();
 }

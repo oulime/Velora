@@ -3792,6 +3792,60 @@ a.topbar__admin-link {
   min-width: 0;
 }
 
+.vel-channel-drag-handle {
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: color-mix(in srgb, var(--vel-text, #fff) 45%, transparent);
+  cursor: grab;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+.vel-channel-drag-handle:hover,
+.vel-channel-drag-handle:focus-visible {
+  color: color-mix(in srgb, var(--vel-text, #fff) 80%, transparent);
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+
+.vel-channel-drag-handle:active,
+.vel-media-item-row--dragging .vel-channel-drag-handle {
+  cursor: grabbing;
+}
+
+.vel-channel-drag-handle__grip {
+  font-size: 0.95rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  opacity: 0.9;
+}
+
+.vel-media-item-row--dragging {
+  opacity: 0.88;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vel-primary, #8a2be2) 45%, transparent),
+    0 6px 20px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vel-surface, #1a1520) 88%, transparent);
+}
+
+.vel-media-item-row--drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--vel-primary, #8a2be2) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vel-primary, #8a2be2) 10%, transparent);
+}
+
 .vel-media-item-row .media-item__main {
   flex: 1;
   min-width: 0;
