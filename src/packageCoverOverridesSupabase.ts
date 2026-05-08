@@ -12,6 +12,11 @@ function isMissingAdminPackageCoversTable(err: { message?: string; code?: string
   );
 }
 
+function isMissingDeletedColumn(err: { message?: string; code?: string }): boolean {
+  const m = (err.message ?? "").toLowerCase();
+  return m.includes("deleted") && (m.includes("column") || m.includes("schema cache"));
+}
+
 export type PackageCoverOverrideEntry = {
   cover_url: string | null;
   theme_bg: string | null;
@@ -19,6 +24,7 @@ export type PackageCoverOverrideEntry = {
   theme_primary: string | null;
   theme_glow: string | null;
   theme_back: string | null;
+  deleted: boolean;
 };
 
 function rowToEntry(row: Record<string, unknown>): PackageCoverOverrideEntry {
@@ -34,6 +40,7 @@ function rowToEntry(row: Record<string, unknown>): PackageCoverOverrideEntry {
     theme_primary: s(row.theme_primary),
     theme_glow: s(row.theme_glow),
     theme_back: s(row.theme_back),
+    deleted: row.deleted === true,
   };
 }
 
@@ -51,15 +58,32 @@ function entryHasAnyTheme(e: PackageCoverOverrideEntry): boolean {
 export async function fetchDbPackageCoverOverrides(
   sb: SupabaseClient
 ): Promise<Map<string, PackageCoverOverrideEntry>> {
-  const { data, error } = await sb
-    .from("admin_package_covers")
-    .select("package_id, cover_url, theme_bg, theme_surface, theme_primary, theme_glow, theme_back");
-  if (error) {
-    if (isMissingAdminPackageCoversTable(error)) {
-      console.warn("[package-cover]", MISSING_ADMIN_PACKAGE_COVERS_HINT, error.message);
-      return new Map();
+  let data: Record<string, unknown>[] | null = null;
+  {
+    const withDeleted = await sb
+      .from("admin_package_covers")
+      .select("package_id, cover_url, theme_bg, theme_surface, theme_primary, theme_glow, theme_back, deleted");
+    if (!withDeleted.error) {
+      data = (withDeleted.data ?? []) as Record<string, unknown>[];
+    } else if (isMissingDeletedColumn(withDeleted.error)) {
+      const legacy = await sb
+        .from("admin_package_covers")
+        .select("package_id, cover_url, theme_bg, theme_surface, theme_primary, theme_glow, theme_back");
+      if (legacy.error) {
+        if (isMissingAdminPackageCoversTable(legacy.error)) {
+          console.warn("[package-cover]", MISSING_ADMIN_PACKAGE_COVERS_HINT, legacy.error.message);
+          return new Map();
+        }
+        throw legacy.error;
+      }
+      data = (legacy.data ?? []) as Record<string, unknown>[];
+    } else {
+      if (isMissingAdminPackageCoversTable(withDeleted.error)) {
+        console.warn("[package-cover]", MISSING_ADMIN_PACKAGE_COVERS_HINT, withDeleted.error.message);
+        return new Map();
+      }
+      throw withDeleted.error;
     }
-    throw error;
   }
   const m = new Map<string, PackageCoverOverrideEntry>();
   for (const row of data ?? []) {
@@ -67,7 +91,7 @@ export async function fetchDbPackageCoverOverrides(
     const id = o.package_id?.trim();
     if (!id) continue;
     const e = rowToEntry(row as Record<string, unknown>);
-    if (!e.cover_url && !entryHasAnyTheme(e)) continue;
+    if (!e.cover_url && !entryHasAnyTheme(e) && !e.deleted) continue;
     m.set(id, e);
   }
   return m;
@@ -87,9 +111,27 @@ export async function upsertPackageCoverOverride(
     theme_primary: preserve?.theme_primary ?? null,
     theme_glow: preserve?.theme_glow ?? null,
     theme_back: preserve?.theme_back ?? null,
+    deleted: preserve?.deleted ?? false,
   };
   const { error } = await sb.from("admin_package_covers").upsert(row, { onConflict: "package_id" });
   if (!error) return {};
+  if (isMissingDeletedColumn(error)) {
+    const legacyRow = {
+      package_id: packageId,
+      cover_url: coverUrl,
+      theme_bg: preserve?.theme_bg ?? null,
+      theme_surface: preserve?.theme_surface ?? null,
+      theme_primary: preserve?.theme_primary ?? null,
+      theme_glow: preserve?.theme_glow ?? null,
+      theme_back: preserve?.theme_back ?? null,
+    };
+    const legacy = await sb.from("admin_package_covers").upsert(legacyRow, { onConflict: "package_id" });
+    if (!legacy.error) return {};
+    if (isMissingAdminPackageCoversTable(legacy.error)) {
+      return { error: `${legacy.error.message}\n\n${MISSING_ADMIN_PACKAGE_COVERS_HINT}` };
+    }
+    return { error: legacy.error.message };
+  }
   if (isMissingAdminPackageCoversTable(error)) {
     return { error: `${error.message}\n\n${MISSING_ADMIN_PACKAGE_COVERS_HINT}` };
   }
@@ -134,9 +176,27 @@ export async function upsertPackageCoverThemeOnly(
     package_id: packageId,
     cover_url: cover,
     ...themes,
+    deleted: prev?.deleted ?? false,
   };
   const { error } = await sb.from("admin_package_covers").upsert(row, { onConflict: "package_id" });
   if (!error) return {};
+  if (isMissingDeletedColumn(error)) {
+    const legacyRow = {
+      package_id: packageId,
+      cover_url: cover,
+      theme_bg: themes.theme_bg,
+      theme_surface: themes.theme_surface,
+      theme_primary: themes.theme_primary,
+      theme_glow: themes.theme_glow,
+      theme_back: themes.theme_back,
+    };
+    const legacy = await sb.from("admin_package_covers").upsert(legacyRow, { onConflict: "package_id" });
+    if (!legacy.error) return {};
+    if (isMissingAdminPackageCoversTable(legacy.error)) {
+      return { error: `${legacy.error.message}\n\n${MISSING_ADMIN_PACKAGE_COVERS_HINT}` };
+    }
+    return { error: legacy.error.message };
+  }
   if (isMissingAdminPackageCoversTable(error)) {
     return { error: `${error.message}\n\n${MISSING_ADMIN_PACKAGE_COVERS_HINT}` };
   }
@@ -168,6 +228,7 @@ export async function clearPackageCoverImageKeepingThemes(
         theme_primary: prev.theme_primary,
         theme_glow: prev.theme_glow,
         theme_back: prev.theme_back,
+        deleted: prev.deleted,
       })
       .eq("package_id", packageId);
     if (error) {
@@ -193,4 +254,32 @@ export async function deletePackageCoverOverride(
     return { error: error.message };
   }
   return {};
+}
+
+/** Soft-delete state for non-DB packages (admin-visible, hidden from non-admin users). */
+export async function setPackageCoverDeletedState(
+  sb: SupabaseClient,
+  packageId: string,
+  deleted: boolean,
+  prev: PackageCoverOverrideEntry | null | undefined
+): Promise<{ error?: string }> {
+  const row = {
+    package_id: packageId,
+    cover_url: prev?.cover_url ?? null,
+    theme_bg: prev?.theme_bg ?? null,
+    theme_surface: prev?.theme_surface ?? null,
+    theme_primary: prev?.theme_primary ?? null,
+    theme_glow: prev?.theme_glow ?? null,
+    theme_back: prev?.theme_back ?? null,
+    deleted,
+  };
+  const { error } = await sb.from("admin_package_covers").upsert(row, { onConflict: "package_id" });
+  if (!error) return {};
+  if (isMissingDeletedColumn(error)) {
+    return { error: "Colonne `deleted` manquante dans admin_package_covers. Appliquez la migration SQL." };
+  }
+  if (isMissingAdminPackageCoversTable(error)) {
+    return { error: `${error.message}\n\n${MISSING_ADMIN_PACKAGE_COVERS_HINT}` };
+  }
+  return { error: error.message };
 }

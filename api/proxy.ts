@@ -286,6 +286,51 @@ function applyMediaCachingHeaders(
   }
 }
 
+function isCatalogApiTarget(targetUrl: string): boolean {
+  try {
+    const u = new URL(targetUrl);
+    const p = u.pathname.toLowerCase();
+    if (
+      p.endsWith("/api/channels") ||
+      p.endsWith("/api/live/channels") ||
+      p.endsWith("/api/content/live") ||
+      p.endsWith("/api/streams/live") ||
+      p.endsWith("/api/tv/channels") ||
+      p.endsWith("/api/content/channels") ||
+      p.endsWith("/api/live")
+    ) {
+      return true;
+    }
+    if (!p.includes("/api/proxy/xtream/")) return false;
+    return (
+      p.endsWith("/live_categories") ||
+      p.endsWith("/live_streams") ||
+      p.endsWith("/vod_categories") ||
+      p.endsWith("/vod_streams") ||
+      p.endsWith("/series_categories") ||
+      p.endsWith("/series") ||
+      p.endsWith("/get_series") ||
+      p.endsWith("/player_api") ||
+      p.endsWith("/player_api.php")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function applyCatalogCachingHeaders(
+  req: VercelRequest,
+  res: VercelResponse,
+  upstream: Response,
+  targetUrl: string
+): void {
+  if ((req.method ?? "GET").toUpperCase() !== "GET") return;
+  if (!upstream.ok) return;
+  if (!isCatalogApiTarget(targetUrl)) return;
+  // Shared edge cache on Vercel for 10 min; browser still revalidates.
+  res.setHeader("Cache-Control", "public, max-age=0, s-maxage=600, stale-while-revalidate=60");
+}
+
 function isAllowedTarget(target: string): boolean {
   const raw = process.env.PROXY_ALLOWED_HOSTS?.trim();
   if (!raw) return true;
@@ -442,6 +487,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         res.setHeader("Pragma", "no-cache");
         res.setHeader("Expires", "0");
       }
+      applyCatalogCachingHeaders(req, res, upstream, target);
       res.send(Buffer.from(rewritten, "utf8"));
       return;
     }
@@ -456,6 +502,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     ) {
       copyUpstreamHeadersToRes(upstream, res);
       applyMediaCachingHeaders(res, upstream, target);
+      applyCatalogCachingHeaders(req, res, upstream, target);
       res.end();
       return;
     }
@@ -475,6 +522,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges);
     }
     applyMediaCachingHeaders(res, upstream, target);
+    applyCatalogCachingHeaders(req, res, upstream, target);
     res.flushHeaders?.();
 
     const webBody = upstream.body as import("stream/web").ReadableStream<Uint8Array>;

@@ -25,6 +25,51 @@ const upstreamSession = {
   lastM3u8ByHlsDir: new Map<string, string>(),
 };
 
+const CATALOG_PROXY_CACHE_TTL_MS = 10 * 60 * 1000;
+type CatalogProxyCacheEntry = {
+  expiresAt: number;
+  status: number;
+  contentType: string | null;
+  body: Buffer;
+};
+const catalogProxyCache = new Map<string, CatalogProxyCacheEntry>();
+
+function isCatalogApiTarget(targetUrl: string): boolean {
+  try {
+    const u = new URL(targetUrl);
+    const p = u.pathname.toLowerCase();
+    if (
+      p.endsWith("/api/channels") ||
+      p.endsWith("/api/live/channels") ||
+      p.endsWith("/api/content/live") ||
+      p.endsWith("/api/streams/live") ||
+      p.endsWith("/api/tv/channels") ||
+      p.endsWith("/api/content/channels") ||
+      p.endsWith("/api/live")
+    ) {
+      return true;
+    }
+    if (!p.includes("/api/proxy/xtream/")) return false;
+    return (
+      p.endsWith("/live_categories") ||
+      p.endsWith("/live_streams") ||
+      p.endsWith("/vod_categories") ||
+      p.endsWith("/vod_streams") ||
+      p.endsWith("/series_categories") ||
+      p.endsWith("/series") ||
+      p.endsWith("/get_series") ||
+      p.endsWith("/player_api") ||
+      p.endsWith("/player_api.php")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function catalogProxyCacheKey(method: string, targetUrl: string): string {
+  return `${method.toUpperCase()}::${targetUrl}`;
+}
+
 
 function isHttpUrl(s: string): boolean {
   try {
@@ -422,6 +467,21 @@ function proxyMiddleware() {
       q,
       from
     );
+    const cacheableCatalogRequest = method === "GET" && isCatalogApiTarget(q);
+    const cacheKey = cacheableCatalogRequest ? catalogProxyCacheKey(method, q) : null;
+    if (cacheableCatalogRequest && cacheKey) {
+      const hit = catalogProxyCache.get(cacheKey);
+      if (hit && hit.expiresAt > Date.now()) {
+        res.statusCode = hit.status;
+        if (hit.contentType) res.setHeader("Content-Type", hit.contentType);
+        res.setHeader("X-Proxy-Cache", "HIT");
+        res.end(hit.body);
+        return;
+      }
+      if (hit && hit.expiresAt <= Date.now()) {
+        catalogProxyCache.delete(cacheKey);
+      }
+    }
 
     if (debug === "all") {
       logProxy("info", "request", {
@@ -576,6 +636,26 @@ function proxyMiddleware() {
         copyUpstreamHeadersToClient(upstream, res);
         applyMediaCachingHeaders(res, upstream, q);
         res.end();
+        return;
+      }
+
+      if (cacheableCatalogRequest) {
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        const contentTypeRaw = upstream.headers.get("content-type");
+        const contentType = contentTypeRaw?.split(";")[0]?.trim() ?? null;
+        res.statusCode = upstream.status;
+        copyUpstreamHeadersToClient(upstream, res);
+        if (contentType) res.setHeader("Content-Type", contentType);
+        res.setHeader("X-Proxy-Cache", "MISS");
+        if (upstream.ok && cacheKey) {
+          catalogProxyCache.set(cacheKey, {
+            expiresAt: Date.now() + CATALOG_PROXY_CACHE_TTL_MS,
+            status: upstream.status,
+            contentType,
+            body: buf,
+          });
+        }
+        res.end(buf);
         return;
       }
 

@@ -185,6 +185,7 @@ create table if not exists public.admin_package_covers (
   theme_primary text,
   theme_glow text,
   theme_back text,
+  deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -203,3 +204,4 @@ alter table public.admin_package_covers add column if not exists theme_primary t
 alter table public.admin_package_covers add column if not exists theme_glow text;
 alter table public.admin_package_covers add column if not exists theme_back text;
 alter table public.admin_package_covers alter column cover_url drop not null;
+alter table public.admin_package_covers add column if not exists deleted boolean not null default false;
