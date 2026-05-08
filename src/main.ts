@@ -40,6 +40,7 @@ import {
   pingNodecastSourcesStatus,
   proxiedUrl,
   imageUrlForDisplay,
+  tmdbImageUrlMatchDisplayWidth,
   normalizeServerInput,
   sameOrigin,
   type NodecastTranscodeSessionMeta,
@@ -2731,34 +2732,37 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
   }
 }
 
-const VOD_HERO_GRAD_BACKDROP = `linear-gradient(180deg, rgba(6,4,12,0.06) 0%, rgba(6,4,12,0.1) 32%, rgba(6,4,12,0.45) 58%, rgba(6,4,12,0.88) 82%, rgba(6,4,12,0.97) 100%)`;
-const VOD_HERO_GRAD_POSTER = `linear-gradient(180deg, rgba(6,4,12,0.35) 0%, rgba(6,4,12,0.95) 100%)`;
+/** Backdrop / poster URL for VOD hero: TMDB profile matched to content width × DPR, then proxy rules. */
+function vodHeroBackgroundDisplayUrl(rawHttps: string): string {
+  const w = Math.max(240, elContentView.clientWidth || (typeof window !== "undefined" ? window.innerWidth : 800));
+  return imageUrlForDisplay(tmdbImageUrlMatchDisplayWidth(rawHttps, w));
+}
 
 /** Précharge le visuel puis l’affiche (évite l’affiche carte → swap backdrop). */
 function preloadVodDetailHeroBackground(
   bg: HTMLDivElement,
   primaryUrl: string,
-  gradient: string,
   fallbackUrl: string | null,
   isStill: () => boolean
 ): void {
-  const apply = (url: string, grad: string) => {
+  const apply = (url: string) => {
     if (!isStill()) return;
     bg.classList.remove("vel-vod-detail__bg--loading");
     bg.classList.remove("vel-vod-detail__bg--entered");
-    bg.style.backgroundImage = `${grad}, url("${url}")`;
+    bg.style.backgroundImage = `url("${url}")`;
     void bg.offsetWidth;
     bg.classList.add("vel-vod-detail__bg--entered");
   };
 
-  const attempt = (url: string, grad: string, allowIconFallback: boolean) => {
+  const attempt = (url: string, allowIconFallback: boolean) => {
     const img = new Image();
     img.decoding = "async";
-    img.onload = () => apply(url, grad);
+    img.onload = () => apply(url);
     img.onerror = () => {
       if (!isStill()) return;
       if (allowIconFallback && fallbackUrl && url !== fallbackUrl) {
-        attempt(fallbackUrl, VOD_HERO_GRAD_BACKDROP, false);
+        bg.classList.remove("vel-vod-detail__bg--poster");
+        attempt(fallbackUrl, false);
         return;
       }
       bg.classList.remove("vel-vod-detail__bg--loading", "vel-vod-detail__bg--entered");
@@ -2767,7 +2771,7 @@ function preloadVodDetailHeroBackground(
     img.src = url;
   };
 
-  attempt(primaryUrl, gradient, Boolean(fallbackUrl));
+  attempt(primaryUrl, Boolean(fallbackUrl));
 }
 
 /** Masque « Regarder » (films uniquement) si ce titre joue dans le lecteur VOD ouvert. */
@@ -2957,23 +2961,14 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
     const poster = info?.posterUrl?.trim();
     const fallbackIcon = iconHref ? proxiedUrl(iconHref) : null;
     if (backdrop) {
-      preloadVodDetailHeroBackground(
-        bg,
-        imageUrlForDisplay(backdrop),
-        VOD_HERO_GRAD_BACKDROP,
-        fallbackIcon,
-        isStill
-      );
+      bg.classList.remove("vel-vod-detail__bg--poster");
+      preloadVodDetailHeroBackground(bg, vodHeroBackgroundDisplayUrl(backdrop), fallbackIcon, isStill);
     } else if (poster) {
-      preloadVodDetailHeroBackground(
-        bg,
-        imageUrlForDisplay(poster),
-        VOD_HERO_GRAD_POSTER,
-        fallbackIcon,
-        isStill
-      );
+      bg.classList.add("vel-vod-detail__bg--poster");
+      preloadVodDetailHeroBackground(bg, vodHeroBackgroundDisplayUrl(poster), fallbackIcon, isStill);
     } else if (fallbackIcon) {
-      preloadVodDetailHeroBackground(bg, fallbackIcon, VOD_HERO_GRAD_BACKDROP, null, isStill);
+      bg.classList.remove("vel-vod-detail__bg--poster");
+      preloadVodDetailHeroBackground(bg, fallbackIcon, null, isStill);
     } else {
       bg.classList.remove("vel-vod-detail__bg--loading", "vel-vod-detail__bg--entered");
       bg.style.backgroundImage = "";
