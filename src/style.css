@@ -4074,15 +4074,39 @@ body.vel-vod-fullscreen-active .main--velora {
   min-width: 0;
 }
 
-/* Grille chaînes LIVE (colonnes multiples ; les modes VOD gardent leurs règles dédiées) */
-.main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
-  gap: 10px;
+/* Grille chaînes LIVE : 1 col <600px, 2 cols 600–1025px, puis 3 / 4 / 5+ selon la largeur. */
+@media (max-width: 599px) {
+  .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
 }
 
-@media (max-width: 379px) {
+@media (min-width: 600px) and (max-width: 1025px) {
   .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+@media (min-width: 1026px) and (max-width: 1439px) {
+  .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+}
+
+@media (min-width: 1440px) and (max-width: 1919px) {
+  .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+}
+
+@media (min-width: 1920px) {
+  .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.75rem;
   }
 }
 
@@ -5541,11 +5565,6 @@ body.vel-vod-fullscreen-active .main--velora {
     );
     padding-left: max(0.75rem, env(safe-area-inset-left));
     padding-right: max(0.75rem, env(safe-area-inset-right));
-  }
-
-  .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0.75rem;
   }
 
   .main--velora #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) .vel-media-item-row {
