@@ -68,6 +68,7 @@ import { fetchDbPackageGridOrders, upsertPackageGridOrder } from "./packageGridO
 import {
   clearPackageCoverImageKeepingThemes,
   fetchDbPackageCoverOverrides,
+  setPackageCoverDeletedState,
   upsertPackageCoverOverride,
   upsertPackageCoverThemeOnly,
   type PackageCoverOverrideEntry,
@@ -1687,6 +1688,7 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
   if (!state) return;
   const st = state;
   const emptyEmoji = tab === "movies" ? "🎬" : "📺";
+  const adminTools = showAdminChannelCurateTools() && uiAdminPackageId != null;
   for (const s of streams) {
     const card = document.createElement("button");
     card.type = "button";
@@ -1744,6 +1746,41 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
     body.appendChild(title);
 
     card.append(media, body);
+    if (adminTools) {
+      const tools = document.createElement("div");
+      tools.className = "vel-media-item-tools";
+
+      const btnAssign = document.createElement("button");
+      btnAssign.type = "button";
+      btnAssign.className = "vel-media-item-tool vel-media-item-tool--assign";
+      btnAssign.title = "Affecter à un bouquet";
+      btnAssign.setAttribute("aria-label", "Affecter à un bouquet");
+      btnAssign.textContent = "➡️";
+      btnAssign.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openChannelAssignDialog(s.stream_id);
+      });
+
+      const btnRemove = document.createElement("button");
+      btnRemove.type = "button";
+      btnRemove.className = "vel-media-item-tool vel-media-item-tool--remove";
+      btnRemove.title = "Retirer ce contenu";
+      btnRemove.setAttribute("aria-label", "Retirer ce contenu");
+      btnRemove.textContent = "🗑️";
+      btnRemove.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!window.confirm("Retirer ce contenu de toutes les listes ?")) return;
+        void (async () => {
+          const ok = await persistStreamCuration(s.stream_id, STREAM_CURATION_HIDDEN);
+          if (ok) renderPackageChannelList();
+        })();
+      });
+
+      tools.append(btnAssign, btnRemove);
+      card.appendChild(tools);
+    }
     card.addEventListener("click", () => {
       if (tab === "movies") {
         vodDetailStream = s;
@@ -2806,13 +2843,33 @@ function reorderVisibleStreamIds(ids: number[], fromIdx: number, toIdx: number, 
 function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
   if (!state) return [];
   if (uiTab === "movies") {
-    return state.vodStreamsByCat.get(String(packageId)) ?? [];
+    return curatedStreamsForOpenPackageFromMap(packageId, state.vodStreamsByCat);
   }
   if (uiTab === "series") {
-    return state.seriesStreamsByCat.get(String(packageId)) ?? [];
+    return curatedStreamsForOpenPackageFromMap(packageId, state.seriesStreamsByCat);
   }
   const raw = liveStreamsAlphaForPackage(packageId);
   return applySavedOrder(raw, getPackageChannelOrder(packageId));
+}
+
+function curatedStreamsForOpenPackageFromMap(
+  packageId: string,
+  streamsByCat: Map<string, LiveStream[]>
+): LiveStream[] {
+  const nativeSet = new Set((streamsByCat.get(String(packageId)) ?? []).map((s) => s.stream_id));
+  const all = collectStreamsFromProviderCategories(streamsByCat, providerCategoryIdsForCurrentCountry());
+  const cur = curationMapForSelection();
+  const out: LiveStream[] = [];
+  for (const s of all) {
+    const ct = cur?.get(s.stream_id) ?? null;
+    if (ct === STREAM_CURATION_HIDDEN) continue;
+    if (ct) {
+      if (ct === packageId) out.push(s);
+      continue;
+    }
+    if (nativeSet.has(s.stream_id)) out.push(s);
+  }
+  return out.sort((a, b) => displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr"));
 }
 
 /** Icône fallback grille / thème : uniquement des chaînes visibles (hors « Mots masqués — noms »). */
@@ -3065,6 +3122,11 @@ function httpsCatalogCoverOverride(packageId: string): string | null {
   return u && /^https?:\/\//i.test(u) ? u : null;
 }
 
+function isSoftDeletedNonDbPackage(packageId: string): boolean {
+  if (isLikelyUuid(packageId)) return false;
+  return packageCoverOverrideById.get(packageId)?.deleted === true;
+}
+
 function hexForVelColorInput(fallback: string, raw: string | null | undefined): string {
   const t = (raw ?? "").trim();
   if (/^#[0-9a-f]{6}$/i.test(t)) return `#${t.slice(1).toLowerCase()}`;
@@ -3133,6 +3195,7 @@ function mergeThemeIntoOverrideEntry(
     theme_primary: dialog.theme_primary,
     theme_glow: dialog.theme_glow,
     theme_back: dialog.theme_back,
+    deleted: prev?.deleted ?? false,
   };
 }
 
@@ -3327,12 +3390,19 @@ function renderPackagesGrid(): void {
     readAdminGridToolsEnabled() &&
     isPackagesGridTab();
   const showAdminGridReorder = showAdminPackageImageTools;
+  const showAdminDeletePackage = showAdminPackageImageTools;
   const showAdminLiveGridExtras = showAdminPackageImageTools && uiTab === "live";
   if (showAdminLiveGridExtras) appendAddPackageCard();
 
-  const pkgs = applySavedPackageGridOrder(mergedPackagesForGrid(), getSavedPackageGridOrder(uiTab));
+  const orderedPkgs = applySavedPackageGridOrder(mergedPackagesForGrid(), getSavedPackageGridOrder(uiTab));
+  const pkgs = isAdminSession()
+    ? orderedPkgs
+    : orderedPkgs.filter(
+        (pkg) => !isSoftDeletedNonDbPackage(pkg.id) && streamsDisplayedForOpenPackage(pkg.id).length > 0
+      );
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
+    const isSoftDeleted = isSoftDeletedNonDbPackage(pkg.id);
     const matched = streamsForPackageCoverFallback(pkg.id);
     const channelFirstIcon = matched
       .map((s) => resolvedIconUrl(s.stream_icon, st.base))
@@ -3341,6 +3411,7 @@ function renderPackagesGrid(): void {
     if (isDb) {
       const card = document.createElement("div");
       card.className = "vel-package-card vel-package-card--db";
+      if (isSoftDeleted) card.classList.add("vel-package-card--deleted");
       card.tabIndex = 0;
       card.setAttribute("role", "button");
       card.dataset.packageId = pkg.id;
@@ -3350,6 +3421,7 @@ function renderPackagesGrid(): void {
         const edit = document.createElement("button");
         edit.type = "button";
         edit.className = "admin-pkg-edit-sb";
+        if (showAdminDeletePackage) edit.classList.add("admin-pkg-edit-sb--with-del");
         edit.setAttribute("aria-label", `Image et couleurs — ${pkg.name}`);
         edit.title =
           uiTab === "live"
@@ -3363,17 +3435,18 @@ function renderPackagesGrid(): void {
         });
         card.appendChild(edit);
       }
-      if (showAdminLiveGridExtras) {
+      if (showAdminDeletePackage) {
         const del = document.createElement("button");
         del.type = "button";
         del.className = "admin-pkg-del-sb";
         del.dataset.packageId = pkg.id;
-        del.setAttribute("aria-label", `Supprimer ${pkg.name}`);
-        del.textContent = "×";
+        del.setAttribute("aria-label", isSoftDeleted ? `Restaurer ${pkg.name}` : `Supprimer ${pkg.name}`);
+        del.title = isSoftDeleted ? "Restaurer ce bouquet" : "Supprimer ce bouquet";
+        del.textContent = isSoftDeleted ? "↺" : "×";
         del.addEventListener("click", (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
-          void deleteDbPackageById(pkg.id);
+          void deletePackageById(pkg.id);
         });
         card.appendChild(del);
       }
@@ -3449,6 +3522,13 @@ function renderPackagesGrid(): void {
       title.className = "vel-package-card__title";
       title.textContent = pkg.name;
       card.appendChild(title);
+      if (isSoftDeleted) {
+        const badge = document.createElement("span");
+        badge.className = "vel-package-card__deleted-badge";
+        badge.textContent = "Supprimé";
+        badge.setAttribute("aria-label", "Supprimé");
+        card.appendChild(badge);
+      }
 
       card.addEventListener("click", (ev) => {
         if (
@@ -3472,6 +3552,7 @@ function renderPackagesGrid(): void {
     const card = document.createElement("button");
     card.type = "button";
     card.className = "vel-package-card";
+    if (isSoftDeleted) card.classList.add("vel-package-card--deleted");
     card.dataset.packageId = pkg.id;
     card.setAttribute("aria-label", pkg.name);
 
@@ -3479,6 +3560,7 @@ function renderPackagesGrid(): void {
       const edit = document.createElement("button");
       edit.type = "button";
       edit.className = "admin-pkg-edit-sb";
+      if (showAdminDeletePackage) edit.classList.add("admin-pkg-edit-sb--with-del");
       edit.setAttribute("aria-label", `Image et couleurs — ${pkg.name}`);
       edit.title =
         uiTab === "live"
@@ -3491,6 +3573,21 @@ function renderPackagesGrid(): void {
         openPackageCoverEditDialog(pkg);
       });
       card.appendChild(edit);
+    }
+    if (showAdminDeletePackage) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "admin-pkg-del-sb";
+      del.dataset.packageId = pkg.id;
+      del.setAttribute("aria-label", isSoftDeleted ? `Restaurer ${pkg.name}` : `Supprimer ${pkg.name}`);
+      del.title = isSoftDeleted ? "Restaurer ce bouquet" : "Supprimer ce bouquet";
+      del.textContent = isSoftDeleted ? "↺" : "×";
+      del.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void deletePackageById(pkg.id);
+      });
+      card.appendChild(del);
     }
     if (showAdminGridReorder) {
       wirePackageCardDragReorder(card, pkg.id, pkg.name);
@@ -3546,9 +3643,17 @@ function renderPackagesGrid(): void {
     title.className = "vel-package-card__title";
     title.textContent = pkg.name;
     card.appendChild(title);
+    if (isSoftDeleted) {
+      const badge = document.createElement("span");
+      badge.className = "vel-package-card__deleted-badge";
+      badge.textContent = "Supprimé";
+      badge.setAttribute("aria-label", "Supprimé");
+      card.appendChild(badge);
+    }
 
     card.addEventListener("click", (ev) => {
-      if ((ev.target as HTMLElement).closest(".admin-pkg-edit-sb, .vel-package-drag-handle")) return;
+      if ((ev.target as HTMLElement).closest(".admin-pkg-edit-sb, .admin-pkg-del-sb, .vel-package-drag-handle"))
+        return;
       openAdminPackage(pkg.id);
     });
     elPackagesView.appendChild(card);
@@ -3643,22 +3748,39 @@ function goLiveHome(): void {
   showPackagesShell();
 }
 
-async function deleteDbPackageById(packageId: string): Promise<void> {
-  if (!isLikelyUuid(packageId)) return;
-  if (
-    !window.confirm("Supprimer ce package Supabase ? Les catégories liées seront supprimées (cascade).")
-  ) {
-    return;
-  }
+async function deletePackageById(packageId: string): Promise<void> {
   const sb = getSupabaseClient();
   if (!sb) return;
-  const { error } = await sb.from("admin_packages").delete().eq("id", packageId);
-  if (error) {
-    setLoginStatus(error.message, true);
-    return;
+  if (isLikelyUuid(packageId)) {
+    if (
+      !window.confirm("Supprimer ce package Supabase ? Les catégories liées seront supprimées (cascade).")
+    ) {
+      return;
+    }
+    const { error } = await sb.from("admin_packages").delete().eq("id", packageId);
+    if (error) {
+      setLoginStatus(error.message, true);
+      return;
+    }
+  } else {
+    const isDeleted = isSoftDeletedNonDbPackage(packageId);
+    const confirmMsg = isDeleted
+      ? "Restaurer ce bouquet catalogue ?"
+      : "Supprimer ce bouquet catalogue pour les utilisateurs (visible seulement en admin) ?";
+    if (!window.confirm(confirmMsg)) return;
+    const res = await setPackageCoverDeletedState(
+      sb,
+      packageId,
+      !isDeleted,
+      packageCoverOverrideById.get(packageId)
+    );
+    if (res.error) {
+      setLoginStatus(res.error, true);
+      return;
+    }
   }
   await refreshSupabaseHierarchy();
-  if (state && uiShell === "packages" && uiTab === "live") {
+  if (state && uiShell === "packages" && isPackagesGridTab()) {
     renderPackagesGrid();
   }
 }

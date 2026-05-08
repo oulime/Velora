@@ -86,6 +86,7 @@ const MAX_PARALLEL_TRANSCODE_SESSION_POSTS = 1;
 let activeTranscodeSessionPosts = 0;
 const transcodeSessionPostWaiters: Array<() => void> = [];
 
+
 async function withTranscodeSessionPostSlot<T>(run: () => Promise<T>): Promise<T> {
   if (activeTranscodeSessionPosts >= MAX_PARALLEL_TRANSCODE_SESSION_POSTS) {
     await new Promise<void>((resolve) => {
@@ -984,7 +985,8 @@ async function loadXtreamVodCatalog(
       .map(mapXtreamCategoryRow)
       .filter((c): c is LiveCategory => c != null);
     const categories = mappedCats.length ? mappedCats : categoriesFromStreams(mappedStreams);
-    return { categories, streamsByCat: groupStreamsByCategory(mappedStreams) };
+    const streamsByCat = groupStreamsByCategory(mappedStreams);
+    return { categories, streamsByCat };
   } catch {
     return null;
   }
@@ -1079,7 +1081,8 @@ async function loadXtreamSeriesCatalog(
     return null;
   }
   const categories = seriesCats.length ? seriesCats : categoriesFromStreams(allSeries);
-  return { categories, streamsByCat: groupStreamsByCategory(allSeries) };
+  const streamsByCat = groupStreamsByCategory(allSeries);
+  return { categories, streamsByCat };
 }
 
 /** Favorites rows often wrap the Xtream row under `series` / `item` / etc. */
@@ -1250,9 +1253,10 @@ export async function tryNodecastLoginAndLoad(
           })
           .filter((c): c is LiveCategory => c != null);
         const categories = mappedCats.length ? mappedCats : categoriesFromStreams(streams);
+        const streamsByCat = groupStreamsByCategory(streams);
         return {
           categories,
-          streamsByCat: groupStreamsByCategory(streams),
+          streamsByCat,
           authHeaders: nodecastAuthHeaders,
           nodecastXtreamSourceId: sourceId,
           vodCategories: [],
@@ -1269,13 +1273,14 @@ export async function tryNodecastLoginAndLoad(
   }
 
   const categories = categoriesFromStreams(streams);
+  const streamsByCat = groupStreamsByCategory(streams);
   const discovered = await discoverXtreamSourceIdsInternal(base, nodecastAuthHeaders);
   const tryIds = discovered.length ? discovered : ["9"];
   const fromStream = streams.map((s) => s.nodecast_source_id?.trim()).find(Boolean);
   const nodecastXtreamSourceId = fromStream || tryIds[0];
   return {
     categories,
-    streamsByCat: groupStreamsByCategory(streams),
+    streamsByCat,
     authHeaders: nodecastAuthHeaders,
     nodecastXtreamSourceId,
     vodCategories: [],

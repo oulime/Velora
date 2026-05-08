@@ -4653,9 +4653,36 @@ a.topbar__admin-link {
   right: 2.35rem;
 }
 
+.main--velora .vel-package-card .admin-pkg-edit-sb--with-del {
+  right: 2.35rem;
+}
+
 .main--velora .vel-package-card .admin-pkg-edit-sb:hover {
   border-color: rgba(167, 139, 250, 0.55);
   transform: scale(1.06);
+}
+
+.main--velora .vel-package-card__deleted-badge {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.14rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 113, 133, 0.45);
+  background: rgba(127, 29, 29, 0.48);
+  color: rgba(254, 226, 226, 0.96);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.main--velora .vel-package-card--deleted {
+  outline: 1px dashed rgba(251, 113, 133, 0.5);
+  outline-offset: -2px;
 }
 
 .admin-add-package-dialog {
