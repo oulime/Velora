@@ -384,6 +384,261 @@ let state: {
 /** Persist Nodecast catalogue + layouts for env-auth refresh (skip second login/catalog fetch). */
 const NODECAST_SNAPSHOT_STORAGE_KEY = "velora-nodecast-session-v1";
 
+/** Last catalogue UI (package, fiche VOD, onglet…) — restauré après F5 / rechargement. */
+const VELORA_UI_ROUTE_STORAGE_KEY = "velora-ui-route-v1";
+
+function veloraRouteDebugEnabled(): boolean {
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("velora_debug_route") === "1") {
+      return true;
+    }
+    return new URLSearchParams(window.location.search).has("velora_debug_route");
+  } catch {
+    return false;
+  }
+}
+
+function veloraRouteDebug(message: string, detail?: Record<string, unknown>): void {
+  if (!veloraRouteDebugEnabled()) return;
+  if (detail) console.info("[Velora route]", message, detail);
+  else console.info("[Velora route]", message);
+}
+
+type VeloraUiRouteV1 = {
+  v: 1;
+  credsKey: string;
+  shell: "packages" | "content";
+  tab: "live" | "movies" | "series";
+  packageId: string | null;
+  selectedPillId: string;
+  vodMovieUiPhase: "list" | "detail";
+  vodStreamId: number | null;
+  seriesUiPhase: "list" | "detail";
+  seriesStreamId: number | null;
+  mainScrollY: number;
+  /** `#dynamic-list` (fiche VOD plein écran et listes) — distinct de `elMain`. */
+  catalogListScrollY: number;
+  /** Pays du header (même logique que les listes VOD / bouquets). */
+  adminCountryId?: string | null;
+};
+
+type OpenAdminPackageRestore = {
+  selectedPillId?: string | null;
+  vodMovieUiPhase?: "list" | "detail";
+  vodStreamId?: number | null;
+  seriesUiPhase?: "list" | "detail";
+  seriesStreamId?: number | null;
+  skipResetScroll?: boolean;
+};
+
+let persistVeloraUiRouteTimer = 0;
+
+/** Aligné sur `state` quand il existe (évite écarts URL formulaire vs `state.base` après reload). */
+function routePersistenceCredsKey(): string {
+  if (state) {
+    return `${state.mode}\u0000${state.base}\u0000${state.username}\u0000${state.password}`;
+  }
+  if (envAutoConnectConfigured()) return nodecastSnapshotCredsKey();
+  return "";
+}
+
+function routeMatchesPersistedCreds(r: VeloraUiRouteV1): boolean {
+  const now = routePersistenceCredsKey();
+  if (r.credsKey === now) return true;
+  if (envAutoConnectConfigured() && r.credsKey === nodecastSnapshotCredsKey()) return true;
+  return false;
+}
+
+function findStreamInPackageByStreamId(packageId: string, streamId: number): LiveStream | null {
+  if (!state) return null;
+  const base = streamsDisplayedForOpenPackage(packageId);
+  const inPackage = base.find((s) => s.stream_id === streamId);
+  if (inPackage) return inPackage;
+  const pool =
+    uiTab === "series" ? state.seriesStreamsByCat : state.vodStreamsByCat;
+  for (const list of pool.values()) {
+    const s = list.find((x) => x.stream_id === streamId);
+    if (s) return s;
+  }
+  return null;
+}
+
+function persistVeloraUiRoute(): void {
+  if (!state) return;
+  try {
+    const credsKey = routePersistenceCredsKey();
+    if (!credsKey) return;
+    const payload: VeloraUiRouteV1 = {
+      v: 1,
+      credsKey,
+      shell: uiShell,
+      tab: uiTab,
+      packageId: uiAdminPackageId,
+      selectedPillId,
+      vodMovieUiPhase,
+      vodStreamId: vodDetailStream?.stream_id ?? null,
+      seriesUiPhase,
+      seriesStreamId: seriesDetailStream?.stream_id ?? null,
+      mainScrollY: Math.round(elMain.scrollTop),
+      catalogListScrollY: Math.round(elDynamicList.scrollTop),
+      adminCountryId: selectedAdminCountryId,
+    };
+    sessionStorage.setItem(VELORA_UI_ROUTE_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    /* ignore */
+  }
+}
+
+function schedulePersistVeloraUiRoute(): void {
+  if (!state) return;
+  window.clearTimeout(persistVeloraUiRouteTimer);
+  persistVeloraUiRouteTimer = window.setTimeout(() => {
+    persistVeloraUiRouteTimer = 0;
+    persistVeloraUiRoute();
+  }, 160);
+}
+
+function clearVeloraUiRouteStorage(): void {
+  try {
+    sessionStorage.removeItem(VELORA_UI_ROUTE_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function tryApplyVeloraUiRouteAfterSessionReady(): Promise<boolean> {
+  if (!state) {
+    veloraRouteDebug("skip restore: no state");
+    return false;
+  }
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(VELORA_UI_ROUTE_STORAGE_KEY);
+  } catch {
+    return false;
+  }
+  if (!raw) {
+    veloraRouteDebug("skip restore: nothing in sessionStorage", { key: VELORA_UI_ROUTE_STORAGE_KEY });
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    clearVeloraUiRouteStorage();
+    veloraRouteDebug("cleared restore: JSON parse error");
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null || (parsed as Partial<VeloraUiRouteV1>).v !== 1) {
+    clearVeloraUiRouteStorage();
+    veloraRouteDebug("cleared restore: bad payload shape");
+    return false;
+  }
+  const r = parsed as VeloraUiRouteV1;
+  if (!routeMatchesPersistedCreds(r)) {
+    clearVeloraUiRouteStorage();
+    veloraRouteDebug("cleared restore: creds mismatch", {
+      storedLen: r.credsKey?.length,
+      now: routePersistenceCredsKey().slice(0, 80),
+      legacyMatch: envAutoConnectConfigured() ? r.credsKey === nodecastSnapshotCredsKey() : false,
+    });
+    return false;
+  }
+  const tab: UiTab =
+    r.tab === "live" || r.tab === "movies" || r.tab === "series" ? r.tab : "live";
+  const scrollY = Number.isFinite(r.mainScrollY) ? Math.max(0, Math.round(r.mainScrollY)) : 0;
+  const listScrollY = Number.isFinite(r.catalogListScrollY)
+    ? Math.max(0, Math.round(r.catalogListScrollY))
+    : 0;
+
+  const bumpScroll = () => {
+    elMain.scrollTop = scrollY;
+    elDynamicList.scrollTop = listScrollY;
+  };
+
+  if (r.shell === "packages") {
+    if (tab === "movies" || tab === "series") {
+      await openNodecastMediaShellAsync(tab);
+      if (!state) return false;
+      if (uiShell !== "packages") return false;
+      requestAnimationFrame(() => {
+        bumpScroll();
+        requestAnimationFrame(bumpScroll);
+      });
+      schedulePersistVeloraUiRoute();
+      return true;
+    }
+    uiTab = "live";
+    showPackagesShell();
+    requestAnimationFrame(() => {
+      bumpScroll();
+      requestAnimationFrame(bumpScroll);
+    });
+    schedulePersistVeloraUiRoute();
+    return true;
+  }
+
+  if (r.shell !== "content" || !r.packageId) {
+    clearVeloraUiRouteStorage();
+    veloraRouteDebug("cleared restore: not content shell or missing packageId", {
+      shell: r.shell,
+      packageId: r.packageId,
+    });
+    return false;
+  }
+
+  const ac = r.adminCountryId?.trim();
+  if (ac && state) {
+    const countries = countryRowsForSelect();
+    if (countries.some((c) => c.id === ac)) {
+      selectedAdminCountryId = ac;
+      if ([...elCountrySelect.options].some((o) => o.value === ac)) {
+        elCountrySelect.value = ac;
+      }
+      try {
+        sessionStorage.setItem(COUNTRY_STORAGE_KEY, ac);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /* `findPackageById` uses `providerLayoutForUiTab()` → depends on `uiTab` (live vs films vs séries). */
+  uiTab = tab;
+  if (!findPackageById(r.packageId)) {
+    clearVeloraUiRouteStorage();
+    veloraRouteDebug("cleared restore: package not found for tab", { packageId: r.packageId, tab });
+    return false;
+  }
+  if (
+    state.mode === "nodecast" &&
+    ((tab === "movies" && r.vodStreamId != null && r.vodMovieUiPhase !== "list") ||
+      (tab === "series" && r.seriesStreamId != null && r.seriesUiPhase !== "list"))
+  ) {
+    await ensureNodecastVodOrSeriesCatalogReady(tab);
+    if (!state) return false;
+  }
+  openAdminPackage(r.packageId, {
+    selectedPillId: r.selectedPillId,
+    vodMovieUiPhase: r.vodMovieUiPhase,
+    vodStreamId: r.vodStreamId,
+    seriesUiPhase: r.seriesUiPhase,
+    seriesStreamId: r.seriesStreamId,
+    skipResetScroll: true,
+  });
+  requestAnimationFrame(() => {
+    bumpScroll();
+    requestAnimationFrame(bumpScroll);
+  });
+  schedulePersistVeloraUiRoute();
+  veloraRouteDebug("restore ok: content package", {
+    packageId: r.packageId,
+    tab,
+    pill: r.selectedPillId,
+  });
+  return true;
+}
+
 type NodecastSnapshotStateJson = {
   mode: "nodecast";
   base: string;
@@ -523,12 +778,14 @@ async function tryRestoreVeloraNodecastSnapshot(): Promise<boolean> {
     destroyVodPlayer();
     elNowPlaying.textContent = "";
 
-    goLiveHome();
+    const routeOk = await tryApplyVeloraUiRouteAfterSessionReady();
+    if (!routeOk) goLiveHome();
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
     ensureVeloraHistoryRootMarker();
     syncAdminSettingsButton();
     setLoginStatus("");
+    persistVeloraUiRoute();
   } catch {
     clearVeloraNodecastSnapshot();
     state = null;
@@ -3153,8 +3410,9 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
 }
 
 function renderPackageChannelList(): void {
-  if (!state || uiAdminPackageId == null) return;
-  const base = streamsDisplayedForOpenPackage(uiAdminPackageId);
+  try {
+    if (!state || uiAdminPackageId == null) return;
+    const base = streamsDisplayedForOpenPackage(uiAdminPackageId);
   const filtered = streamsAfterPill(base, selectedPillId).filter((s) => !shouldHideChannelByName(s.name));
   const adminTools = showAdminChannelCurateTools();
 
@@ -3384,17 +3642,20 @@ function renderPackageChannelList(): void {
     elDynamicList.appendChild(row);
   }
 
-  if (filtered.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "vel-empty-msg";
-    empty.textContent =
-      uiAdminPackageId && isLikelyUuid(uiAdminPackageId)
-        ? "Ce bouquet Supabase n’a pas encore de catégories / règles liées au catalogue fournisseur dans la base."
-        : "Aucune chaîne dans cette catégorie.";
-    elDynamicList.appendChild(empty);
-  }
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "vel-empty-msg";
+      empty.textContent =
+        uiAdminPackageId && isLikelyUuid(uiAdminPackageId)
+          ? "Ce bouquet Supabase n’a pas encore de catégories / règles liées au catalogue fournisseur dans la base."
+          : "Aucune chaîne dans cette catégorie.";
+      elDynamicList.appendChild(empty);
+    }
 
-  syncAdminAddChannelsButton();
+    syncAdminAddChannelsButton();
+  } finally {
+    schedulePersistVeloraUiRoute();
+  }
 }
 
 function providerLayoutForUiTab(): AdminConfig {
@@ -4652,7 +4913,7 @@ function renderPackagesGrid(): void {
   }
 }
 
-function openAdminPackage(packageId: string): void {
+function openAdminPackage(packageId: string, restore?: OpenAdminPackageRestore): void {
   if (!state) return;
   const pkg = findPackageById(packageId);
   if (!pkg) return;
@@ -4661,6 +4922,20 @@ function openAdminPackage(packageId: string): void {
   vodDetailStream = null;
   seriesUiPhase = "list";
   seriesDetailStream = null;
+  if (tab === "movies" && restore?.vodStreamId != null && restore.vodMovieUiPhase !== "list") {
+    const row = findStreamInPackageByStreamId(packageId, restore.vodStreamId);
+    if (row) {
+      vodDetailStream = row;
+      vodMovieUiPhase = "detail";
+    }
+  }
+  if (tab === "series" && restore?.seriesStreamId != null && restore.seriesUiPhase !== "list") {
+    const row = findStreamInPackageByStreamId(packageId, restore.seriesStreamId);
+    if (row) {
+      seriesDetailStream = row;
+      seriesUiPhase = "detail";
+    }
+  }
   activeStreamId = null;
   destroyVodPlayer();
   uiShell = "content";
@@ -4673,8 +4948,12 @@ function openAdminPackage(packageId: string): void {
   elContentView.classList.remove("hidden");
   elContentView.classList.remove("content-view--vod-film-detail");
   elDynamicList.classList.remove("item-list--vod-film-detail");
-  selectedPillId = "all";
   syncPillDefsForPackage(packageId);
+  if (restore?.selectedPillId && pillDefs.some((p) => p.id === restore.selectedPillId)) {
+    selectedPillId = restore.selectedPillId;
+  } else {
+    selectedPillId = "all";
+  }
   renderCategoryPills();
   updatePillsVisibility();
   renderPackageChannelList();
@@ -4682,7 +4961,7 @@ function openAdminPackage(packageId: string): void {
   syncAdminAddChannelsButton();
   syncPlayerDismissOverlay();
   syncMainInPackageClass();
-  resetVeloraMainScroll();
+  if (!restore?.skipResetScroll) resetVeloraMainScroll();
   veloraPushNavigationState("package");
 }
 
@@ -4713,6 +4992,7 @@ function applyPackagesShellUi(): void {
   syncCatalogBackButtonLabel();
   syncPlayerDismissOverlay();
   syncMainInPackageClass();
+  schedulePersistVeloraUiRoute();
 }
 
 /** Grille bouquets : conserve l’onglet (Live / Films / Séries). */
@@ -4720,6 +5000,7 @@ function showPackagesShell(): void {
   const pendingHist = veloraUiHistoryDepth;
   applyPackagesShellUi();
   stripVeloraHistorySilently(pendingHist);
+  schedulePersistVeloraUiRoute();
 }
 
 function goLiveHome(): void {
@@ -5434,24 +5715,20 @@ function showVodPlaceholder(
   }
   elDynamicList.appendChild(msg);
   syncMainInPackageClass();
+  schedulePersistVeloraUiRoute();
 }
 
 function openNodecastMediaShell(tab: "movies" | "series"): void {
   void openNodecastMediaShellAsync(tab);
 }
 
-async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<void> {
-  if (!state || state.mode !== "nodecast") {
-    showVodPlaceholder(tab, "no-nodecast");
-    return;
-  }
+/** Charge films ou séries Nodecast si besoin (login initial = maps vides). */
+async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): Promise<void> {
+  if (!state || state.mode !== "nodecast") return;
   const sid = state.nodecastXtreamSourceId?.trim();
-  if (!sid) {
-    showVodPlaceholder(tab, "no-xtream-source");
-    return;
-  }
+  if (!sid) return;
 
-  if (tab === "movies" && !state.vodCatalogLoaded) {
+  if (tab === "movies" && (!state.vodCatalogLoaded || countStreamsInMap(state.vodStreamsByCat) === 0)) {
     setCatalogLoadingVisible(true, "Chargement des films…", "movies");
     try {
       const v = await fetchNodecastVodCatalog(state.base, sid, state.nodecastAuthHeaders);
@@ -5470,10 +5747,9 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
     } finally {
       setCatalogLoadingVisible(false);
     }
-  } else if (
-    tab === "series" &&
-    (!state.seriesCatalogLoaded || countStreamsInMap(state.seriesStreamsByCat) === 0)
-  ) {
+  }
+
+  if (tab === "series" && (!state.seriesCatalogLoaded || countStreamsInMap(state.seriesStreamsByCat) === 0)) {
     setCatalogLoadingVisible(true, "Chargement des séries…", "series");
     try {
       const s = await fetchNodecastSeriesCatalog(state.base, sid, state.nodecastAuthHeaders);
@@ -5493,6 +5769,20 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
       setCatalogLoadingVisible(false);
     }
   }
+}
+
+async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<void> {
+  if (!state || state.mode !== "nodecast") {
+    showVodPlaceholder(tab, "no-nodecast");
+    return;
+  }
+  const sid = state.nodecastXtreamSourceId?.trim();
+  if (!sid) {
+    showVodPlaceholder(tab, "no-xtream-source");
+    return;
+  }
+
+  await ensureNodecastVodOrSeriesCatalogReady(tab);
 
   if (!state) return;
   const map = tab === "movies" ? state.vodStreamsByCat : state.seriesStreamsByCat;
@@ -5522,6 +5812,7 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
   syncAdminAddChannelsButton();
   syncPlayerDismissOverlay();
   syncMainInPackageClass();
+  schedulePersistVeloraUiRoute();
 }
 
 function onTabClick(tab: UiTab): void {
@@ -5766,13 +6057,15 @@ async function connect(): Promise<void> {
     destroyVodPlayer();
     elNowPlaying.textContent = "";
 
-    goLiveHome();
+    const routeOk = await tryApplyVeloraUiRouteAfterSessionReady();
+    if (!routeOk) goLiveHome();
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
     ensureVeloraHistoryRootMarker();
     syncAdminSettingsButton();
     setLoginStatus("");
     persistVeloraNodecastSnapshot();
+    persistVeloraUiRoute();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     setLoginStatus(msg, true);
@@ -5796,6 +6089,7 @@ async function connect(): Promise<void> {
 
 function disconnect(): void {
   clearVeloraNodecastSnapshot();
+  clearVeloraUiRouteStorage();
   veloraUiHistoryDepth = 0;
   veloraApplyingHistoryPopstate = true;
   setChannelNamePrefixesFromDatabase(null);
@@ -5877,6 +6171,8 @@ function onCountryChange(): void {
     renderPackagesGrid();
     syncPlayerDismissOverlay();
   }
+
+  schedulePersistVeloraUiRoute();
 }
 
 elBtnConnect.addEventListener("click", () => void connect());
@@ -5952,7 +6248,10 @@ function toggleVideoPlayPauseVod(ev: MouseEvent): void {
 }
 
 elVideoVod?.addEventListener("click", toggleVideoPlayPauseVod);
-window.addEventListener("pagehide", teardownVodMedia);
+window.addEventListener("pagehide", () => {
+  teardownVodMedia();
+  persistVeloraUiRoute();
+});
 window.addEventListener("beforeunload", teardownVodMedia);
 
 document.addEventListener("keydown", (e) => {

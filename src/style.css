@@ -3890,6 +3890,13 @@ body.vel-vod-fullscreen-active .main--velora {
   padding-top: max(0.45rem, env(safe-area-inset-top, 0px));
 }
 
+/* Sous le lecteur VOD : pas d’affiche série — uniquement saisons + épisodes. */
+#dynamic-list.item-list.item-list--vod-film-detail
+  .vel-vod-detail--series.vel-vod-detail--episode-playing
+  .vel-vod-detail__bg {
+  display: none;
+}
+
 #dynamic-list.item-list.item-list--vod-film-detail
   .vel-vod-detail--series.vel-vod-detail--episode-playing
   .vel-vod-detail__episodes-section {
