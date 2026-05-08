@@ -1,0 +1,518 @@
+<body class="vite-autoconnect" cz-shortcut-listen="true">
+    <div id="settings-shell" class="settings-shell countries-admin-page hidden" aria-hidden="true">
+      <div id="settings-view-granted">
+        <header class="countries-admin-head">
+          <div class="countries-admin-head-row">
+            <button type="button" id="cc-back-player" class="countries-admin-back countries-admin-back--btn">
+              ← Lecteur
+            </button>
+            <button type="button" id="cc-quit-admin" class="countries-admin-quit">Quitter le mode admin</button>
+          </div>
+          <h1>Pays (liste de correspondance)</h1>
+          <p class="countries-admin-intro">
+            Chaque ligne associe une <strong>clé de reconnaissance</strong> (texte normalisé au début du nom de
+            catégorie, ex. <code>france</code>, <code>cameroon</code>) au <strong>nom affiché</strong> dans le menu
+            Pays. Vide = le lecteur utilise la liste intégrée par défaut.
+          </p>
+        </header>
+
+        <main class="countries-admin-main">
+          <p id="countries-admin-status" class="status" aria-live="polite"></p>
+
+          <section class="panel countries-admin-form">
+            <h2 id="cc-form-heading">Ajouter</h2>
+            <div class="field row">
+              <div>
+                <label for="cc-match">Clé (ex. france, brazil, [ALB])</label>
+                <input id="cc-match" type="text" placeholder="france ou [ALB]" autocomplete="off">
+              </div>
+              <div>
+                <label for="cc-display">Nom affiché</label>
+                <input id="cc-display" type="text" placeholder="France" autocomplete="off">
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="cc-add" class="primary">Ajouter</button>
+              <button type="button" id="cc-cancel-edit" class="countries-admin-cancel hidden">Annuler</button>
+            </div>
+          </section>
+
+          <section class="panel countries-admin-list-wrap">
+            <h2>Entrées</h2>
+            <div id="cc-table-wrap" class="countries-admin-table-wrap"></div>
+          </section>
+
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Préfixes — noms de chaîne</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Texte retiré au <strong>début</strong> du nom pour l’affichage et les règles d’affectation (ex.
+              <code>FR - </code>, <code>[FR] </code>, <code>|FR| </code>). Comparaison insensible à la casse sur
+              le début du titre. Les préfixes les plus longs sont essayés en premier.
+            </p>
+            <p id="cn-prefix-status" class="status" aria-live="polite"></p>
+            <div class="field row">
+              <div>
+                <label for="cn-prefix-val">Préfixe</label>
+                <input id="cn-prefix-val" type="text" placeholder="FR - " autocomplete="off">
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="cn-prefix-add" class="primary">Ajouter</button>
+            </div>
+            <div id="cn-prefix-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
+          </section>
+
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Mots masqués — noms de chaîne</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Si le <strong>nom brut</strong> d’une chaîne contient l’un de ces textes (n’importe où, insensible à la
+              casse), elle n’apparaît pas dans la liste du package. Ex. <code>18+</code>, <code>XXX</code>.
+            </p>
+            <p id="hf-status" class="status" aria-live="polite"></p>
+            <div class="field row">
+              <div>
+                <label for="hf-needle">Mot ou fragment</label>
+                <input id="hf-needle" type="text" placeholder="18+" autocomplete="off">
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="hf-add" class="primary">Ajouter</button>
+            </div>
+            <div id="hf-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
+          </section>
+
+          <section class="panel countries-admin-form vel-shell-bg-panel" style="margin-top: 1.75rem">
+            <h2>Apparence — fond du lecteur</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Dégradés légers par-dessus la couleur de fond du thème (bouquet ou défaut). Visible après
+              enregistrement ou en fermant les paramètres.
+            </p>
+            <div class="field">
+              <label for="vel-shell-bg-select">Style de fond</label>
+              <select id="vel-shell-bg-select" class="admin-add-package-dialog__select vel-shell-bg-select">
+                <option value="default">Défaut — couleur unie (thème)</option>
+                <option value="aurora">Aurore — violet et cyan</option>
+                <option value="mesh">Mesh — grille douce violette</option>
+                <option value="ember">Braise — chaud ambre / rose</option>
+                <option value="ocean">Océan — bleu et sarcelle</option>
+                <option value="nocturne">Nocturne — bleu nuit et halo</option>
+              </select>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <div id="settings-view-denied" class="hidden">
+        <main class="countries-admin-main panel" style="max-width: 36rem; margin: 2rem auto">
+          <h1>Accès refusé</h1>
+          <p class="countries-admin-intro">
+            Réservé aux administrateurs. Ouvrez le lecteur avec <code>?admin=1</code> dans l’URL (puis rechargez si
+            besoin), puis <strong>Paramètres</strong>. Pour désactiver l’admin : <code>?admin=0</code>.
+          </p>
+          <p>
+            <button type="button" id="cc-denied-back" class="countries-admin-back countries-admin-back--btn">
+              ← Retour
+            </button>
+          </p>
+        </main>
+      </div>
+    </div>
+
+    <div class="app">
+      <header class="header header--login-only hidden">
+        <h1>Xtream Codes Player</h1>
+        <p class="sub">Connexion Nodecast — proxy API et flux (CORS).</p>
+      </header>
+
+      <section class="panel login-panel hidden">
+        <div class="login-card">
+          <div class="login-card__brand">
+            <span class="login-card__play" aria-hidden="true">▶</span>
+            <div>
+              <div class="login-card__title">VELORA</div>
+              <div class="login-card__tag">Premium IPTV</div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="server">URL du serveur</label>
+            <input id="server" type="url" placeholder="http://exemple.com:8080" autocomplete="off">
+          </div>
+          <div class="field row">
+            <div>
+              <label for="user">Identifiant</label>
+              <input id="user" type="text" autocomplete="username">
+            </div>
+            <div>
+              <label for="pass">Mot de passe</label>
+              <input id="pass" type="password" autocomplete="current-password">
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" id="btn-connect" class="primary">Connexion</button>
+            <span id="login-status" class="status" aria-live="polite"></span>
+          </div>
+        </div>
+      </section>
+
+      <main class="main main--velora main--velora-in-package" id="main" style="--vel-bg: #0f1530; --vel-surface: #1b285d; --vel-primary: #5677d3; --vel-accent-glow: rgba(86, 119, 211, 0.38);">
+        <div class="vel-dashboard">
+          <div class="vel-sticky-top">
+          <header class="vel-header">
+            <button type="button" id="btn-logo-home" class="vel-brand vel-brand--home" aria-label="Retour à l'accueil">
+              Velora<span class="vel-brand-vip"><span class="vel-brand-vip__v">V</span><span class="vel-brand-vip__i">I</span><span class="vel-brand-vip__p">P</span></span>
+            </button>
+            <div class="vel-header__right">
+              <div class="vel-header__country">
+                <select id="country-select" class="country-select" aria-label="Pays"><option value="185cbe43-556c-40ed-84f1-cc3893845eb3">Afrique</option><option value="410fe400-4f6a-4959-b272-ded25d41639f">Albania</option><option value="f271ff47-e273-4b66-a898-1ab36d2b454e">Allmagne</option><option value="f889eb4a-0ce9-4b2f-b745-462e9a2a9fcb">Amérique</option><option value="1a337fb6-7045-42b9-8bad-b76da03ac0b7">Arabe</option><option value="3ea968b5-0c65-4368-a5a4-2e7cbeaf47b7">Asie</option><option value="9c51429b-0e4d-42e4-a307-1b0b53161cd8">Espain</option><option value="f7363f6e-cc0f-4bcf-ae92-ca815a568d80">Europe</option><option value="3b9fc1c4-5fa2-4345-88b7-44953802a5ec">France</option><option value="1287aee7-376e-4548-9fb0-52b431c0925f">Italie</option><option value="dcb48ff1-2d4f-4481-9c18-fdf7c322ffc7">NL</option><option value="1d896cf2-6cdd-45c8-a3be-125c4c04344c">Portogal</option><option value="c6a3d2d1-9b70-45f4-bf4f-18096b2ee33b">UK</option><option value="06232bc3-81c4-4cfe-a168-ad0ff1bf5a50">USA</option><option value="country__other">Autres</option></select>
+              </div>
+              <button type="button" id="btn-settings" class="vel-settings-btn hidden" title="Paramètres (admin)" aria-label="Paramètres administrateur">
+                P
+              </button>
+              <div id="vel-admin-tools-wrap" class="vel-admin-tools-wrap hidden">
+                <label class="vel-admin-tools" title="Afficher ou masquer le + et la suppression des bouquets Supabase">
+                  <span class="vel-admin-tools__switch">
+                    <input type="checkbox" id="toggle-admin-ui" role="switch" aria-checked="true">
+                    <span class="vel-admin-tools__track" aria-hidden="true"></span>
+                  </span>
+
+                </label>
+              </div>
+              <button type="button" id="btn-logout" class="vel-logout hidden" title="Déconnexion">
+                Out
+              </button>
+            </div>
+          </header>
+
+          <p id="vel-curate-status" class="vel-curate-status hidden" role="status" aria-live="polite"></p>
+
+          <div id="now-playing" class="player-now-playing vel-now-playing hidden" role="status" aria-live="polite" aria-hidden="true"></div>
+
+          <div id="player-container" class="player-container hidden" aria-hidden="true">
+            <button type="button" id="btn-close-player" class="vel-player-dismiss-x hidden" title="Fermer le lecteur" aria-label="Fermer le lecteur">
+              ×
+            </button>
+            <div class="video-wrapper">
+              <video id="video" controls="" playsinline="" preload="auto" crossorigin="anonymous"></video>
+              <div id="player-buffering" class="player-buffering hidden" aria-hidden="true" role="status" aria-live="polite" aria-label="Chargement de la lecture">
+                <div class="player-buffering__spinner" aria-hidden="true"></div>
+                <span class="player-buffering__label">Chargement…</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="now-playing-vod" class="player-now-playing vel-now-playing vel-now-playing--vod hidden" role="status" aria-live="polite" aria-hidden="true"></div>
+
+          <div id="vod-player-container" class="player-container player-container--vod hidden" aria-hidden="true">
+            <button type="button" id="btn-close-vod-player" class="vel-player-dismiss-x hidden" title="Fermer le lecteur VOD" aria-label="Fermer le lecteur VOD">
+              ×
+            </button>
+            <div class="video-wrapper">
+              <video id="video-vod" playsinline="" preload="none" crossorigin="anonymous" controls="" src=""></video>
+              <div id="vod-player-buffering" class="player-buffering hidden" aria-hidden="true" role="status" aria-live="polite" aria-label="Chargement du film">
+                <div class="player-buffering__spinner" aria-hidden="true"></div>
+                <span class="player-buffering__label">Chargement…</span>
+              </div>
+              <div id="vod-controls-overlay" class="vod-controls-overlay hidden" aria-hidden="true">
+                <div class="vod-controls-row">
+                  <button id="vod-ctl-play" type="button" class="vod-ctl-btn" aria-label="Pause" title="Pause"><span class="vod-ctl-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="6" width="4" height="12" rx="1.1" fill="currentColor"></rect><rect x="13" y="6" width="4" height="12" rx="1.1" fill="currentColor"></rect></svg></span></button>
+                  <button id="vod-ctl-mute" type="button" class="vod-ctl-btn" aria-label="Mute" title="Mute"><span class="vod-ctl-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10H4z" fill="currentColor"></path><path d="M16.5 8.2a1 1 0 0 1 1.4 0A6 6 0 0 1 19.5 12a6 6 0 0 1-1.6 3.8 1 1 0 1 1-1.5-1.3A4 4 0 0 0 17.5 12a4 4 0 0 0-1.1-2.5 1 1 0 0 1 .1-1.3z" fill="currentColor"></path></svg></span></button>
+                  <span id="vod-ctl-current" class="vod-ctl-time">00:00:05</span>
+                  <div id="vod-ctl-seek-track" class="vod-ctl-seek-track" role="slider" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+                    <div id="vod-ctl-seek-fill" class="vod-ctl-seek-fill" style="width: 0%;"></div>
+                    <div id="vod-ctl-seek-handle" class="vod-ctl-seek-handle" style="left: 0%;"></div>
+                  </div>
+                  <span id="vod-ctl-duration" class="vod-ctl-time">02:05:46</span>
+                  <button id="vod-ctl-fullscreen" type="button" class="vod-ctl-btn" aria-label="Fullscreen" title="Fullscreen"><span class="vod-ctl-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H4a1 1 0 0 0-1 1v4m14-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m13-5v4a1 1 0 0 1-1 1h-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"></path></svg></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="vel-package-toolbar-sticky" class="vel-package-toolbar-sticky">
+            <div class="vel-content-toolbar">
+              <button type="button" id="btn-back-home" class="back-btn" title="Retour à l'accueil">
+                <span class="back-btn__icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M14 6L8 12l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                  </svg>
+                </span>
+                <span class="back-btn__text">Liste</span>
+              </button>
+              <button type="button" id="btn-go-home" class="back-btn back-btn--secondary" title="Retour à l'accueil">
+                <span class="back-btn__icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 10.8L12 4l9 6.8V20a1 1 0 0 1-1 1h-5.5v-6.2h-5V21H4a1 1 0 0 1-1-1v-9.2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                  </svg>
+                </span>
+                <span class="back-btn__text">Accueil</span>
+              </button>
+              <div id="vel-admin-add-channels-wrap" class="vel-admin-add-channels-wrap hidden">
+                <button type="button" id="btn-admin-add-channels" class="vel-admin-add-channels-btn">
+                  + Ajouter des chaînes au bouquet
+                </button>
+              </div>
+            </div>
+          </div>
+          </div>
+
+          <aside class="vel-sidebar" aria-label="Navigation et pays">
+            <div class="nav-tabs hidden" id="main-tabs" role="tablist">
+              <button type="button" class="tab tab--vip-v" id="tab-live" data-tab="live" role="tab">
+                 LIVE
+              </button>
+              <button type="button" class="tab tab--vip-i active" id="tab-movies" data-tab="movies" role="tab">
+                FILMS
+              </button>
+              <button type="button" class="tab tab--vip-p" id="tab-series" data-tab="series" role="tab">
+                SÉRIES
+              </button>
+            </div>
+          </aside>
+
+          <div class="vel-body">
+            <div id="packages-view" class="grid vel-packages hidden" aria-label="Bouquets"><button type="button" class="vel-package-card" data-package-id="714" aria-label="VOD - NETFLIX [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/714/1777918097874-1ja2hat0.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - NETFLIX [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1461" aria-label="VOD - APPLE TV [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1461/1778062346520-wsh1ehst.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - APPLE TV [FR]</span></button><button type="button" class="vel-package-card" data-package-id="716" aria-label="VOD - DISNEY+ [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/716/1778063271038-vn985wpj.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - DISNEY+ [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1214" aria-label="VOD - PRIME+ [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1214/1778068060813-7yqvqtq4.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - PRIME+ [FR]</span></button><button type="button" class="vel-package-card" data-package-id="857" aria-label="VOD - RÉCEMMENT AJOUTER [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/857/1778251372880-ie9ce8uz.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - RÉCEMMENT AJOUTER [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1038" aria-label="VOD - OTHERS [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1038/1778252409421-214bpt5n.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - OTHERS [FR]</span></button><button type="button" class="vel-package-card" data-package-id="638" aria-label="VOD - ACTION [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/638/1778251738592-2uzqh0fi.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - ACTION [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1565" aria-label="VOD - DRAME [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1565/1778070331600-t2549wwa.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - DRAME [FR]</span></button><button type="button" class="vel-package-card" data-package-id="582" aria-label="VOD - ANIME [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/582/1778252785856-2nqj5c89.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - ANIME [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1561" aria-label="VOD - COMEDIE [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1561/1778070311534-csvi902u.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - COMEDIE [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1562" aria-label="VOD - CRIME-THRILLER [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1562/1778256044933-sq80bu8g.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - CRIME-THRILLER [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1566" aria-label="VOD - DOCUMENTAIRE [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1566/1778070353418-3c2re8lx.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - DOCUMENTAIRE [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1636" aria-label="VOD - FILMOGRAPHIE LOUIS DE FUNES [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1636/1778250928855-l1ev4pik.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - FILMOGRAPHIE LOUIS DE FUNES [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1563" aria-label="VOD - HORREUR [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1563/1778250797670-u38gmtjq.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - HORREUR [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1564" aria-label="VOD - ROMANCE [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1564/1778256408707-6eso0g4z.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - ROMANCE [FR]</span></button><button type="button" class="vel-package-card" data-package-id="1560" aria-label="VOD - SCIENCE-FICTION [FR]"><img alt="" role="presentation" src="https://pub-64908156f66740e19f4e8abe3772f3d8.r2.dev/1560/1778070363482-66wsql1m.jpg" class="vel-package-card__art vel-package-card__art--cover"><span class="vel-package-card__title">VOD - SCIENCE-FICTION [FR]</span></button></div>
+
+            <div id="content-view" class="content-view--vod-film-detail">
+              <div id="cat-pills-wrap" class="cat-pills-wrap vel-cat-pills-wrap hidden">
+                <div id="cat-pills" class="vel-pills" role="tablist" aria-label="Filtres"></div>
+              </div>
+              <div class="item-list item-list--vod-film-detail" id="dynamic-list"><article class="vel-vod-detail" aria-label="300&nbsp;: La Naissance d’un Empire (2014)"><div class="vel-vod-detail__bg vel-vod-detail__bg--entered" style="background-image: url(&quot;/proxy?target=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw780%2Fchjkfyo57JexWo1YeIZRMk8wA4m.jpg&amp;from=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Fw780%2Fchjkfyo57JexWo1YeIZRMk8wA4m.jpg&quot;);"></div><div class="vel-vod-detail__inner"><h1 class="vel-vod-detail__title">300&nbsp;: La Naissance d’un Empire (2014)</h1><button type="button" class="vel-vod-detail__watch vel-vod-detail__watch--film primary" aria-label="Regarder « 300&nbsp;: La Naissance d’un Empire (2014) »">Regarder</button><div class="vel-vod-detail__meta"><span class="vel-vod-detail__rating">★ 6.113</span><span class="vel-vod-detail__genre">Action, Drame, Guerre</span></div><p class="vel-vod-detail__plot">En l’an 490 avant J.C., les troupes athéniennes doivent contrer les attaques de l’empire perse. Une grande bataille se prépare. Non loin d’Athènes, à 42 km au nord, Marathon est l’un des derniers remparts protégeant la grande Athènes. Les Perses sont nombreux, beaucoup plus nombreux que les Athéniens, qui vont devoir faire appel aux Spartiates pour les aider.</p><section class="vel-vod-detail__section"><h2 class="vel-vod-detail__section-title">Distribution</h2><p class="vel-vod-detail__cast">Sullivan Stapleton, Eva Green, Lena Headey, Callan Mulvey, David Wenham, Rodrigo Santoro, Jack O'Connell, Andrew Tiernan, Ashraf Barhom, Andrew Pleavin</p></section><section class="vel-vod-detail__section"><h2 class="vel-vod-detail__section-title">Réalisation</h2><p class="vel-vod-detail__director">Noam Murro</p></section></div></article></div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div id="catalog-loading-overlay" class="catalog-loading-overlay hidden" aria-hidden="true" role="status" aria-live="polite" aria-label="Chargement du catalogue" style="">
+        <div class="catalog-loading-overlay__aurora" aria-hidden="true"></div>
+        <div class="catalog-loading-overlay__grid" aria-hidden="true"></div>
+        <div class="catalog-loading-overlay__vignette" aria-hidden="true"></div>
+        <div class="catalog-loading-overlay__inner">
+          <div class="catalog-loading-overlay__spinner" aria-hidden="true">
+            <div class="catalog-loading-overlay__spinner-ring"></div>
+            <div class="catalog-loading-overlay__play-wrap">
+              <span class="catalog-loading-overlay__play">▶</span>
+            </div>
+          </div>
+          <p class="catalog-loading-overlay__brand">
+            Velora<span class="vel-brand-vip"><span class="vel-brand-vip__v">V</span><span class="vel-brand-vip__i">I</span><span class="vel-brand-vip__p">P</span></span>
+          </p>
+          <p id="catalog-loading-status" class="catalog-loading-overlay__status">Chargement du catalogue…</p>
+          <div class="catalog-loading-overlay__eq" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="dialog-admin-add-channels" class="admin-add-channels-dialog">
+      <div class="admin-add-package-dialog__panel admin-add-channels-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Ajouter des chaînes</h2>
+        <p id="add-channels-package-hint" class="admin-add-package-dialog__hint"></p>
+        <div class="field">
+          <label for="add-channels-search">Rechercher</label>
+          <input id="add-channels-search" type="search" class="admin-add-package-dialog__input" placeholder="Nom de chaîne…" autocomplete="off">
+        </div>
+        <div id="add-channels-list" class="add-channels-list" role="group" aria-label="Chaînes disponibles"></div>
+        <p id="add-channels-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="add-channels-select-visible" class="countries-admin-cancel">
+            Tout sélectionner (liste)
+          </button>
+          <button type="button" id="add-channels-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="add-channels-submit" class="primary">Ajouter la sélection</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="dialog-package-cover" class="admin-channel-assign-dialog admin-cover-dialog">
+      <div class="admin-add-package-dialog__panel admin-cover-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Image et couleurs du bouquet</h2>
+        <p id="pce-package-name" class="admin-add-package-dialog__hint"></p>
+        <input type="hidden" id="pce-package-id" value="">
+        <div class="cover-upload">
+          <input id="pce-cover" type="file" class="cover-upload__input" accept="image/jpeg,image/png,image/webp,image/gif" tabindex="-1" aria-label="Fichier image">
+          <div id="pce-dropzone" class="cover-upload__card">
+            <div class="cover-upload__glow" aria-hidden="true"></div>
+            <div id="pce-cover-empty" class="cover-upload__empty">
+              <span class="cover-upload__icon" aria-hidden="true"></span>
+              <p class="cover-upload__lead">Glissez-déposez une image ou choisissez un fichier</p>
+              <p class="cover-upload__limits">JPG, PNG, WebP ou GIF · max 2&nbsp;Mo</p>
+            </div>
+            <div id="pce-cover-preview-wrap" class="cover-upload__preview-wrap hidden">
+              <img id="pce-cover-preview" class="cover-upload__preview" alt="" decoding="async">
+              <p class="cover-upload__limits cover-upload__limits--below-preview">JPG, PNG, WebP ou GIF · max 2&nbsp;Mo</p>
+            </div>
+            <button type="button" id="pce-cover-pick" class="cover-upload__btn">Choisir une image</button>
+          </div>
+        </div>
+        <fieldset class="admin-cover-theme-fieldset">
+          <legend class="cover-upload-field-label">Couleurs du thème (lecteur)</legend>
+          <p class="admin-cover-theme-hint">
+            Enregistré dans Supabase (<code>admin_packages</code> ou surcharges catalogue). Les couleurs identiques au
+            préréglage du nom ne sont pas stockées (le thème peut encore suivre l’image). Utilisez « Réinitialiser les
+            couleurs » pour tout effacer.
+          </p>
+          <div class="admin-cover-theme-grid">
+            <label class="admin-cover-theme-row">
+              <span class="admin-cover-theme-row__label">Fond</span>
+              <input type="color" id="pce-theme-bg" title="Fond">
+            </label>
+            <label class="admin-cover-theme-row">
+              <span class="admin-cover-theme-row__label">Surfaces</span>
+              <input type="color" id="pce-theme-surface" title="Surfaces">
+            </label>
+            <label class="admin-cover-theme-row">
+              <span class="admin-cover-theme-row__label">Accent</span>
+              <input type="color" id="pce-theme-primary" title="Accent">
+            </label>
+            <label class="admin-cover-theme-row admin-cover-theme-row--wide">
+              <span class="admin-cover-theme-row__label">Halo (accent)</span>
+              <input type="text" id="pce-theme-glow" class="admin-cover-theme-text" placeholder="rgba(138, 43, 226, 0.3)" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="admin-cover-theme-row admin-cover-theme-row--wide">
+              <span class="admin-cover-theme-row__label">Lien « retour » (optionnel)</span>
+              <input type="text" id="pce-theme-back" class="admin-cover-theme-text" placeholder="#a78bfa ou rgba(…)" spellcheck="false" autocomplete="off">
+            </label>
+          </div>
+          <button type="button" id="pce-theme-reset" class="countries-admin-cancel admin-cover-theme-reset">
+            Réinitialiser les couleurs
+          </button>
+        </fieldset>
+        <p id="pce-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="pce-clear" class="countries-admin-cancel">Retirer l’image</button>
+          <button type="button" id="pce-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="pce-submit" class="primary">Enregistrer</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="dialog-channel-assign" class="admin-channel-assign-dialog">
+      <div class="admin-add-package-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Affecter la chaîne</h2>
+        <p class="admin-add-package-dialog__hint">
+          Choisissez un bouquet du pays actuel. La chaîne disparaît du bouquet d’origine pour tous les visiteurs.
+        </p>
+        <div class="field">
+          <label for="channel-assign-package">Bouquet</label>
+          <select id="channel-assign-package" class="admin-add-package-dialog__select"></select>
+        </div>
+        <p id="channel-assign-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="channel-assign-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="channel-assign-ok" class="primary">OK</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="dialog-admin-add-package" class="admin-add-package-dialog admin-cover-dialog">
+      <div class="admin-add-package-dialog__panel admin-cover-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Nouveau package (Supabase)</h2>
+        <p class="admin-add-package-dialog__hint">
+          Le bouquet est enregistré dans la base. La liste des pays est la <strong>même</strong> que dans le menu
+          Pays du lecteur ; une ligne <code>admin_countries</code> est créée dans Supabase seulement si besoin pour
+          lier le bouquet.
+        </p>
+        <p id="dap-empty-countries-hint" class="admin-add-package-dialog__microhint hidden">
+          Aucun pays dans le lecteur (connectez-vous au catalogue) ou ajoutez un pays manuellement ci-dessous.
+        </p>
+        <div id="dap-create-country-field" class="field">
+          <label for="dap-new-country-name">Créer un pays (secours)</label>
+          <div class="admin-add-package-dialog__row">
+            <input id="dap-new-country-name" type="text" class="admin-add-package-dialog__input" placeholder="Ex. France" autocomplete="off">
+            <button type="button" id="dap-add-country" class="countries-admin-cancel">Ajouter le pays</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="dap-sb-country">Pays</label>
+          <select id="dap-sb-country" class="admin-add-package-dialog__select"></select>
+        </div>
+        <div class="field">
+          <label for="dap-name">Nom du package</label>
+          <input id="dap-name" type="text" placeholder="Ex. Sports HD" autocomplete="off">
+        </div>
+        <div class="field">
+          <span class="cover-upload-field-label">Image du bouquet (optionnel)</span>
+          <div class="cover-upload">
+            <input id="dap-cover" type="file" class="cover-upload__input" accept="image/jpeg,image/png,image/webp,image/gif" tabindex="-1" aria-label="Image du bouquet">
+            <div id="dap-dropzone" class="cover-upload__card cover-upload__card--compact">
+              <div class="cover-upload__glow" aria-hidden="true"></div>
+              <div id="dap-cover-empty" class="cover-upload__empty">
+                <span class="cover-upload__icon" aria-hidden="true"></span>
+                <p class="cover-upload__lead">Glissez-déposez ou parcourez vos fichiers</p>
+                <p class="cover-upload__limits">JPG, PNG, WebP ou GIF · max 2&nbsp;Mo</p>
+              </div>
+              <div id="dap-cover-preview-wrap" class="cover-upload__preview-wrap hidden">
+                <img id="dap-cover-preview" class="cover-upload__preview" alt="" decoding="async">
+                <p class="cover-upload__limits cover-upload__limits--below-preview">JPG, PNG, WebP ou GIF · max 2&nbsp;Mo</p>
+              </div>
+              <button type="button" id="dap-cover-pick" class="cover-upload__btn">Choisir une image</button>
+            </div>
+          </div>
+          <p class="admin-add-package-dialog__microhint" style="margin-top: 0.5rem; margin-bottom: 0">
+            Stockage : bucket public <code>package-covers</code> sur Supabase, ou Cloudflare&nbsp;/&nbsp;R2 si configuré
+            dans l’environnement.
+          </p>
+        </div>
+        <p id="dap-status" class="status" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="dap-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="dap-submit" class="primary">Ajouter</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="dialog-cover-square-crop" class="admin-channel-assign-dialog admin-cover-crop-dialog">
+      <div class="admin-add-package-dialog__panel admin-cover-dialog__panel admin-cover-crop-dialog__panel">
+        <h2 class="admin-add-package-dialog__title">Recadrer en carré</h2>
+        <p class="admin-add-package-dialog__hint">
+          L’image entière tient dans le carré (bandes si besoin). Fond : couleur unie, dégradé (deux couleurs + angle),
+          ou transparent (aperçu en damier, export PNG). Déplacez et zoomez pour cadrer ; dézoom = marges remplies par
+          le fond choisi.
+        </p>
+        <div id="crop-sq-viewport" class="cover-crop-viewport" tabindex="0" role="application" aria-label="Aperçu du recadrage carré">
+          <canvas id="crop-sq-canvas" width="300" height="300"></canvas>
+        </div>
+        <div class="cover-crop-fill">
+          <div class="cover-crop-fill__field">
+            <label for="crop-sq-fill-mode">Fond autour de l’image</label>
+            <select id="crop-sq-fill-mode" class="admin-add-package-dialog__select cover-crop-fill__select">
+              <option value="solid">Couleur unie</option>
+              <option value="gradient">Dégradé</option>
+              <option value="transparent">Invisible (transparence)</option>
+            </select>
+          </div>
+          <div id="crop-sq-fill-solid-row" class="cover-crop-fill-row">
+            <label for="crop-sq-fill">Couleur</label>
+            <input type="color" id="crop-sq-fill" value="#141118" title="Fond autour de l’image">
+          </div>
+          <div id="crop-sq-fill-gradient-row" class="cover-crop-fill-row cover-crop-fill-row--gradient hidden">
+            <label for="crop-sq-fill-end">Couleur fin</label>
+            <input type="color" id="crop-sq-fill-end" value="#3d2a55" title="Deuxième couleur du dégradé">
+            <label for="crop-sq-gradient-angle" class="cover-crop-fill-row__angle-label">Angle</label>
+            <input type="range" id="crop-sq-gradient-angle" min="0" max="360" value="145" step="1" title="Angle du dégradé (°)">
+            <span id="crop-sq-gradient-angle-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">145°</span>
+          </div>
+        </div>
+        <div class="cover-crop-zoom">
+          <label for="crop-sq-zoom">Zoom</label>
+          <input type="range" id="crop-sq-zoom" min="35" max="300" value="100" step="2">
+        </div>
+        <p id="crop-sq-err" class="cover-crop-err" role="alert"></p>
+        <div class="actions">
+          <button type="button" id="crop-sq-cancel" class="countries-admin-cancel">Annuler</button>
+          <button type="button" id="crop-sq-apply" class="primary">Valider le recadrage</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts?t=1778280845356"></script>
+  
+
+</body>

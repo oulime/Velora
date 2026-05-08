@@ -2738,6 +2738,46 @@ function vodHeroBackgroundDisplayUrl(rawHttps: string): string {
   return imageUrlForDisplay(tmdbImageUrlMatchDisplayWidth(rawHttps, w));
 }
 
+const vodFilmDetailHeroBgResizeObservers = new WeakMap<HTMLDivElement, ResizeObserver>();
+
+/** Painted height for `background-size: 100% auto` (width × aspect), capped to the hero box. */
+function syncVodFilmDetailHeroPaintedHeight(bg: HTMLDivElement): void {
+  const nw = Number(bg.dataset.velHeroNatW);
+  const nh = Number(bg.dataset.velHeroNatH);
+  if (!Number.isFinite(nw) || !Number.isFinite(nh) || nw <= 0 || nh <= 0) {
+    bg.style.removeProperty("--vel-vod-hero-img-h");
+    return;
+  }
+  const w = bg.clientWidth;
+  if (w <= 0) {
+    bg.style.removeProperty("--vel-vod-hero-img-h");
+    return;
+  }
+  const painted = Math.round((w * nh) / nw);
+  const cap = bg.clientHeight || painted;
+  bg.style.setProperty("--vel-vod-hero-img-h", `${Math.min(painted, cap)}px`);
+}
+
+function ensureVodFilmDetailHeroResizeObserver(bg: HTMLDivElement): void {
+  if (vodFilmDetailHeroBgResizeObservers.has(bg)) return;
+  const ro = new ResizeObserver(() => {
+    syncVodFilmDetailHeroPaintedHeight(bg);
+  });
+  ro.observe(bg);
+  vodFilmDetailHeroBgResizeObservers.set(bg, ro);
+}
+
+function teardownVodFilmDetailHeroHeight(bg: HTMLDivElement): void {
+  const ro = vodFilmDetailHeroBgResizeObservers.get(bg);
+  if (ro) {
+    ro.disconnect();
+    vodFilmDetailHeroBgResizeObservers.delete(bg);
+  }
+  bg.style.removeProperty("--vel-vod-hero-img-h");
+  delete bg.dataset.velHeroNatW;
+  delete bg.dataset.velHeroNatH;
+}
+
 /** Précharge le visuel puis l’affiche (évite l’affiche carte → swap backdrop). */
 function preloadVodDetailHeroBackground(
   bg: HTMLDivElement,
@@ -2745,19 +2785,34 @@ function preloadVodDetailHeroBackground(
   fallbackUrl: string | null,
   isStill: () => boolean
 ): void {
-  const apply = (url: string) => {
+  const apply = (url: string, naturalW: number, naturalH: number) => {
     if (!isStill()) return;
     bg.classList.remove("vel-vod-detail__bg--loading");
     bg.classList.remove("vel-vod-detail__bg--entered");
     bg.style.backgroundImage = `url("${url}")`;
     void bg.offsetWidth;
     bg.classList.add("vel-vod-detail__bg--entered");
+    if (naturalW > 0 && naturalH > 0) {
+      bg.dataset.velHeroNatW = String(naturalW);
+      bg.dataset.velHeroNatH = String(naturalH);
+      ensureVodFilmDetailHeroResizeObserver(bg);
+      const bump = () => syncVodFilmDetailHeroPaintedHeight(bg);
+      bump();
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!isStill()) return;
+          bump();
+        });
+      });
+    } else {
+      teardownVodFilmDetailHeroHeight(bg);
+    }
   };
 
   const attempt = (url: string, allowIconFallback: boolean) => {
     const img = new Image();
     img.decoding = "async";
-    img.onload = () => apply(url);
+    img.onload = () => apply(url, img.naturalWidth, img.naturalHeight);
     img.onerror = () => {
       if (!isStill()) return;
       if (allowIconFallback && fallbackUrl && url !== fallbackUrl) {
@@ -2765,6 +2820,7 @@ function preloadVodDetailHeroBackground(
         attempt(fallbackUrl, false);
         return;
       }
+      teardownVodFilmDetailHeroHeight(bg);
       bg.classList.remove("vel-vod-detail__bg--loading", "vel-vod-detail__bg--entered");
       bg.style.backgroundImage = "";
     };
@@ -2970,6 +3026,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
       bg.classList.remove("vel-vod-detail__bg--poster");
       preloadVodDetailHeroBackground(bg, fallbackIcon, null, isStill);
     } else {
+      teardownVodFilmDetailHeroHeight(bg);
       bg.classList.remove("vel-vod-detail__bg--loading", "vel-vod-detail__bg--entered");
       bg.style.backgroundImage = "";
     }
