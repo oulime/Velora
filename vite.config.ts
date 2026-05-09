@@ -8,6 +8,7 @@ import {
   handleR2PackageCoverRoute,
   isR2PackageCoverRoute,
 } from "./api/r2PackageCoverShared";
+import { handleTrialUsageRoute, isTrialUsageRoute } from "./api/trialUsageShared";
 import {
   isR2CatalogCacheConfigured,
   schedulePutCatalogToR2,
@@ -759,6 +760,28 @@ export default defineConfig(({ mode }) => {
           }
           const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
           void handleR2PackageCoverRoute(req, res, merged);
+        });
+      },
+    }, {
+      name: "trial-usage-api",
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (!isTrialUsageRoute(req.url)) {
+            next();
+            return;
+          }
+          const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
+          void handleTrialUsageRoute(req, res, merged);
+        });
+      },
+      configurePreviewServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (!isTrialUsageRoute(req.url)) {
+            next();
+            return;
+          }
+          const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
+          void handleTrialUsageRoute(req, res, merged);
         });
       },
     }, {

@@ -84,6 +84,7 @@ import {
   invalidatePackageImageThemeCache,
 } from "./packageImageTheme";
 import { applyVeloraShellBgToMain } from "./veloraShellBackground";
+import { initTrialPlaybackGate, trialPlaybackAllowed } from "./trialPlayback";
 
 type ServerInfo = {
   url: string;
@@ -1590,8 +1591,10 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   };
   const onCtlPlay = (): void => {
     if (!isVodTranscode) return;
-    if (video.paused) void video.play().catch(() => {});
-    else video.pause();
+    if (video.paused) {
+      if (!trialPlaybackAllowed()) return;
+      void video.play().catch(() => {});
+    } else video.pause();
   };
   const onCtlMute = (): void => {
     if (!isVodTranscode) return;
@@ -2132,6 +2135,10 @@ function playUrl(
   /** Live HLS (direct Xtream / chaîne Nodecast) : masque la barre de progression native (flux non borné). */
   hideNativeProgressBar = false
 ): void {
+  if (!trialPlaybackAllowed()) {
+    flashCurateStatus("Période d’essai terminée — abonnement requis pour continuer.", true);
+    return;
+  }
   destroyVodPlayer();
   teardownPlaybackMedia();
   attachNodecastStatusPollingForPlayback();
@@ -2246,6 +2253,10 @@ function playUrl(
 /** Lecteur VOD : `<video>` et instance HLS séparées du direct TV. */
 function playVodUrl(url: string, label: string, upstreamAuth?: Record<string, string>): void {
   if (!elVideoVod || !elNowPlayingVod) return;
+  if (!trialPlaybackAllowed()) {
+    flashCurateStatus("Période d’essai terminée — abonnement requis pour continuer.", true);
+    return;
+  }
   vodPlaybackSessionId += 1;
   const sessionId = vodPlaybackSessionId;
   setVodPlayerBufferingVisible(true);
@@ -5840,6 +5851,10 @@ function onTabClick(tab: UiTab): void {
 
 async function playStreamByMode(s: LiveStream): Promise<void> {
   if (!state) return;
+  if (!trialPlaybackAllowed()) {
+    flashCurateStatus("Période d’essai terminée — abonnement requis pour continuer.", true);
+    return;
+  }
   const isVodFilm = s.nodecast_media === "vod";
   const hideLiveProgress = !isVodFilm && s.nodecast_media !== "series";
 
@@ -6229,8 +6244,10 @@ function toggleVideoPlayPause(ev: MouseEvent): void {
   const controlsReservePx = 52;
   if (y > r.height - controlsReservePx) return;
   ev.preventDefault();
-  if (elVideo.paused) void elVideo.play().catch(() => {});
-  else elVideo.pause();
+  if (elVideo.paused) {
+    if (!trialPlaybackAllowed()) return;
+    void elVideo.play().catch(() => {});
+  } else elVideo.pause();
 }
 
 elVideo.addEventListener("click", toggleVideoPlayPause);
@@ -6243,8 +6260,10 @@ function toggleVideoPlayPauseVod(ev: MouseEvent): void {
   const controlsReservePx = 52;
   if (y > r.height - controlsReservePx) return;
   ev.preventDefault();
-  if (elVideoVod.paused) void elVideoVod.play().catch(() => {});
-  else elVideoVod.pause();
+  if (elVideoVod.paused) {
+    if (!trialPlaybackAllowed()) return;
+    void elVideoVod.play().catch(() => {});
+  } else elVideoVod.pause();
 }
 
 elVideoVod?.addEventListener("click", toggleVideoPlayPauseVod);
@@ -6269,3 +6288,19 @@ if (envAutoConnectConfigured() && !isSettingsPageOpen()) {
 } else {
   syncAdminSettingsButton();
 }
+
+void initTrialPlaybackGate({
+  liveVideo: elVideo,
+  vodVideo: elVideoVod,
+  isAdmin: () => isAdminSession(),
+  stopAllPlayback: () => {
+    activeStreamId = null;
+    destroyPlayer();
+    destroyVodPlayer();
+    syncSeriesEpisodePlaybackHighlight();
+    syncSeriesDetailEpisodePlayingLayout();
+    if (state && uiShell === "content" && uiAdminPackageId != null) {
+      renderPackageChannelList();
+    }
+  },
+});

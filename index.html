@@ -662,6 +662,35 @@
       </div>
     </dialog>
 
+    <div
+      id="trial-timer-root"
+      class="trial-timer-root hidden"
+      role="status"
+      aria-live="polite"
+      aria-label="Temps d'essai restant"
+    >
+      <span class="trial-timer-root__pulse" aria-hidden="true"></span>
+      <span class="trial-timer-root__label">Essai gratuit</span>
+      <span
+        id="trial-timer-hint"
+        class="trial-timer-root__hint hidden"
+        title="Compteur local sans API Supabase (dev)"
+        >Local</span>
+      <span id="trial-timer-count" class="trial-timer-root__count">1:00</span>
+    </div>
+
+    <dialog id="trial-expired-dialog" class="trial-expired-dialog" aria-labelledby="trial-expired-title">
+      <div class="trial-expired-dialog__panel">
+        <div class="trial-expired-dialog__icon" aria-hidden="true"></div>
+        <h2 id="trial-expired-title" class="trial-expired-dialog__title">Essai terminé</h2>
+        <p class="trial-expired-dialog__text">
+          Votre période d’essai est terminée. Pour continuer à regarder, veuillez souscrire ou vous connecter avec un
+          accès payant.
+        </p>
+        <button type="button" id="trial-expired-close" class="trial-expired-dialog__btn primary">Compris</button>
+      </div>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
