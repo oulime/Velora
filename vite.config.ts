@@ -16,6 +16,11 @@ import {
 } from "./api/r2CatalogCacheShared";
 import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
 import { handleTrialIncrement, handleTrialStatus } from "./api/trialShared";
+import {
+  handleAdminMyIp,
+  handleAdminTrialWhitelist,
+} from "./api/adminTrialWhitelistShared";
+import { ensureProxyTrialAllowsRequest } from "./api/proxyTrialGate";
 
 import { cloudflare } from "@cloudflare/vite-plugin";
 
@@ -426,6 +431,9 @@ function proxyMiddleware(mode: string) {
       return;
     }
 
+    const trialOk = await ensureProxyTrialAllowsRequest(req, res, env);
+    if (!trialOk) return;
+
     const method = (req.method ?? "GET").toUpperCase();
     const debug = proxyDebugMode();
     const upstreamMsRaw = Number(process.env.XTREAM_PROXY_UPSTREAM_MS);
@@ -780,6 +788,14 @@ export default defineConfig(({ mode }) => {
             void handleTrialIncrement(req, res, merged);
             return;
           }
+          if (pathOnly === "/api/admin/trial-whitelist") {
+            void handleAdminTrialWhitelist(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/admin/my-ip" && req.method === "GET") {
+            void handleAdminMyIp(req, res, merged);
+            return;
+          }
           next();
         });
       },
@@ -796,6 +812,14 @@ export default defineConfig(({ mode }) => {
           }
           if (pathOnly === "/api/trial-increment" && req.method === "POST") {
             void handleTrialIncrement(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/admin/trial-whitelist") {
+            void handleAdminTrialWhitelist(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/admin/my-ip" && req.method === "GET") {
+            void handleAdminMyIp(req, res, merged);
             return;
           }
           next();

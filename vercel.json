@@ -19,6 +19,12 @@
     },
     "api/trial.ts": {
       "maxDuration": 15
+    },
+    "api/admin/trial-whitelist.ts": {
+      "maxDuration": 15
+    },
+    "api/admin/my-ip.ts": {
+      "maxDuration": 10
     }
   }
 }

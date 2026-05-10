@@ -61,6 +61,7 @@ let settingsControlsBound = false;
 let prefixAdminBound = false;
 let hiddenFiltersAdminBound = false;
 let shellAppearanceBound = false;
+let trialWhitelistUiBound = false;
 
 function bindDeniedBack(): void {
   if (deniedBackBound) return;
@@ -293,7 +294,203 @@ async function mountSettingsTable(): Promise<void> {
   await loadRows();
   await mountChannelPrefixAdmin(supabase);
   await mountHiddenFiltersAdmin(supabase);
+  await mountTrialWhitelistAdmin();
   mountShellAppearanceControls();
+}
+
+async function mountTrialWhitelistAdmin(): Promise<void> {
+  const elStatus = document.getElementById("tw-status") as HTMLParagraphElement | null;
+  const elIp = document.getElementById("tw-ip") as HTMLInputElement | null;
+  const elLabel = document.getElementById("tw-label") as HTMLInputElement | null;
+  const elNotes = document.getElementById("tw-notes") as HTMLInputElement | null;
+  const elAdd = document.getElementById("tw-add") as HTMLButtonElement | null;
+  const elMyIp = document.getElementById("tw-my-ip") as HTMLButtonElement | null;
+  const elWrap = document.getElementById("tw-wrap") as HTMLDivElement | null;
+  if (!elStatus || !elIp || !elLabel || !elNotes || !elAdd || !elMyIp || !elWrap) return;
+
+  const twSt = elStatus;
+  const twIpIn = elIp;
+  const twLbl = elLabel;
+  const twNts = elNotes;
+  const twAddBtn = elAdd;
+  const twMyIpBtn = elMyIp;
+  const twWrapEl = elWrap;
+
+  function adminHeaders(): HeadersInit {
+    const key = (import.meta.env.VITE_ADMIN_ACCESS_KEY as string | undefined)?.trim();
+    const h: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    };
+    if (key) h["X-Velora-Admin-Access"] = key;
+    return h;
+  }
+
+  function setTwStatus(msg: string, isError = false): void {
+    twSt.textContent = msg;
+    twSt.classList.toggle("error", isError);
+  }
+
+  type TwRow = {
+    ipAddress: string;
+    label: string | null;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+
+  function renderRows(rows: TwRow[]): void {
+    if (rows.length === 0) {
+      twWrapEl.innerHTML =
+        "<p class=\"countries-admin-empty\">Aucune IP dans la liste blanche.</p>";
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "countries-admin-table";
+    table.innerHTML =
+      "<thead><tr><th>IP</th><th>Libellé</th><th>Notes</th><th>Ajoutée</th><th></th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody")!;
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      const dateStr = r.createdAt
+        ? new Date(r.createdAt).toLocaleString("fr-FR")
+        : "—";
+      const lbl = r.label ? escapeHtml(r.label) : "—";
+      const nts = r.notes ? escapeHtml(r.notes) : "—";
+      tr.innerHTML = `<td><code>${escapeHtml(r.ipAddress)}</code></td><td>${lbl}</td><td>${nts}</td><td>${escapeHtml(dateStr)}</td>`;
+      const td = document.createElement("td");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "countries-admin-del";
+      btn.textContent = "Retirer";
+      btn.addEventListener("click", () => {
+        if (
+          !confirm(
+            "Retirer cette IP de la liste blanche ? Elle sera à nouveau soumise à la limite d’essai."
+          )
+        ) {
+          return;
+        }
+        void removeRow(r.ipAddress);
+      });
+      td.appendChild(btn);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    twWrapEl.innerHTML = "";
+    twWrapEl.appendChild(table);
+  }
+
+  async function loadList(): Promise<void> {
+    setTwStatus("Chargement…");
+    try {
+      const r = await fetch("/api/admin/trial-whitelist", {
+        method: "GET",
+        headers: adminHeaders(),
+        cache: "no-store",
+      });
+      const data = (await r.json()) as { items?: TwRow[] };
+      if (!r.ok) {
+        setTwStatus("Impossible de charger la liste blanche.", true);
+        twWrapEl.innerHTML = "";
+        return;
+      }
+      const rows = data.items ?? [];
+      setTwStatus(`${rows.length} adresse(s) dans la liste blanche.`);
+      renderRows(rows);
+    } catch {
+      setTwStatus("Impossible de charger la liste blanche.", true);
+      twWrapEl.innerHTML = "";
+    }
+  }
+
+  async function removeRow(ipAddress: string): Promise<void> {
+    setTwStatus("Suppression…");
+    try {
+      const r = await fetch("/api/admin/trial-whitelist", {
+        method: "DELETE",
+        headers: adminHeaders(),
+        body: JSON.stringify({ ipAddress }),
+      });
+      if (!r.ok) {
+        setTwStatus("Impossible de retirer cette IP.", true);
+        return;
+      }
+      setTwStatus("IP retirée de la liste blanche.");
+      await loadList();
+    } catch {
+      setTwStatus("Impossible de retirer cette IP.", true);
+    }
+  }
+
+  async function addRow(): Promise<void> {
+    const ipAddress = twIpIn.value.trim();
+    if (!ipAddress) {
+      setTwStatus("Adresse IP invalide.", true);
+      return;
+    }
+    twAddBtn.disabled = true;
+    setTwStatus("Enregistrement…");
+    try {
+      const r = await fetch("/api/admin/trial-whitelist", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          ipAddress,
+          label: twLbl.value.trim() || undefined,
+          notes: twNts.value.trim() || undefined,
+        }),
+      });
+      const data = (await r.json()) as { error?: string };
+      if (!r.ok) {
+        const msg =
+          data.error === "Adresse IP invalide."
+            ? "Adresse IP invalide."
+            : "Impossible d’ajouter cette IP.";
+        setTwStatus(msg, true);
+        return;
+      }
+      twIpIn.value = "";
+      twLbl.value = "";
+      twNts.value = "";
+      setTwStatus("IP ajoutée à la liste blanche.");
+      await loadList();
+    } catch {
+      setTwStatus("Impossible d’ajouter cette IP.", true);
+    } finally {
+      twAddBtn.disabled = false;
+    }
+  }
+
+  async function fillMyIp(): Promise<void> {
+    twMyIpBtn.disabled = true;
+    try {
+      const r = await fetch("/api/admin/my-ip", {
+        method: "GET",
+        headers: adminHeaders(),
+        cache: "no-store",
+      });
+      const data = (await r.json()) as { ipAddress?: string };
+      if (!r.ok || !data.ipAddress) {
+        setTwStatus("Impossible de récupérer votre IP actuelle.", true);
+        return;
+      }
+      twIpIn.value = data.ipAddress;
+      setTwStatus("IP détectée — vous pouvez l’ajouter.");
+    } catch {
+      setTwStatus("Impossible de récupérer votre IP actuelle.", true);
+    } finally {
+      twMyIpBtn.disabled = false;
+    }
+  }
+
+  if (!trialWhitelistUiBound) {
+    trialWhitelistUiBound = true;
+    twAddBtn.addEventListener("click", () => void addRow());
+    twMyIpBtn.addEventListener("click", () => void fillMyIp());
+  }
+
+  await loadList();
 }
 
 function mountShellAppearanceControls(): void {

@@ -31,6 +31,11 @@ interface ImportMetaEnv {
   readonly VITE_TRIAL_API_BASE?: string;
   /** Trial length in seconds, default 60 (server: `VITE_TRIAL_SECONDS` or `TRIAL_SECONDS`). */
   readonly VITE_TRIAL_SECONDS?: string;
+  /**
+   * Optional secret sent as `X-Velora-Admin-Access` for `/api/admin/*` routes.
+   * Prefer server-only `ADMIN_ACCESS_KEY` / `VELORA_ADMIN_ACCESS_KEY` on the host; when empty, admin APIs are open (local dev).
+   */
+  readonly VITE_ADMIN_ACCESS_KEY?: string;
 }
 
 interface ImportMeta {

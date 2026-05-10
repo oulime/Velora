@@ -1,12 +1,6 @@
 /** Client-side trial gate: playback-time only; server is source of truth. */
 
-type TrialApiPayload = {
-  allowed: boolean;
-  secondsUsed: number;
-  secondsRemaining: number;
-  limitSeconds: number;
-  checkoutUrl: string;
-};
+import type { TrialStatusResponse } from "./trialTypes";
 
 type TrialErrJson = {
   error?: string;
@@ -29,6 +23,8 @@ let incrementInFlight = false;
 let verificationError = false;
 /** Missing env / trial_config from API — never treated as trial exhaustion. */
 let trialBackendConfigError = false;
+/** Server flag: IP on admin whitelist — no countdown, no increment, no offer. */
+let trialWhitelisted = false;
 
 let badgeRoot: HTMLDivElement | null = null;
 let modalOverlay: HTMLDivElement | null = null;
@@ -62,7 +58,7 @@ function isTrialConfigurationFailure(
 }
 
 async function requestTrialStatus(): Promise<
-  | { ok: true; payload: TrialApiPayload }
+  | { ok: true; payload: TrialStatusResponse }
   | { ok: false; configError: boolean; status: number; body: unknown }
 > {
   let r: Response;
@@ -88,11 +84,11 @@ async function requestTrialStatus(): Promise<
       body: parsed,
     };
   }
-  return { ok: true, payload: parsed as TrialApiPayload };
+  return { ok: true, payload: parsed as TrialStatusResponse };
 }
 
 async function requestTrialIncrement(): Promise<
-  | { ok: true; payload: TrialApiPayload }
+  | { ok: true; payload: TrialStatusResponse }
   | { ok: false; configError: boolean; status: number; body: unknown }
 > {
   let r: Response;
@@ -121,7 +117,7 @@ async function requestTrialIncrement(): Promise<
       body: parsed,
     };
   }
-  return { ok: true, payload: parsed as TrialApiPayload };
+  return { ok: true, payload: parsed as TrialStatusResponse };
 }
 
 function pauseAllVideos(): void {
@@ -142,12 +138,32 @@ function videosMeetPlayingGate(video: HTMLVideoElement): boolean {
   );
 }
 
+/** True when the server considers the IP's trial exhausted (sales offer, not config/network error). */
+function isTrialExpiredFromPayload(j: TrialStatusResponse): boolean {
+  if (j.whitelisted === true) return false;
+  if (!j.allowed || j.secondsRemaining <= 0) return true;
+  const lim = j.limitSeconds;
+  return typeof lim === "number" && lim > 0 && j.secondsUsed >= lim;
+}
+
 /** Only call after a successful 200 trial-status / increment payload. */
-function applyServerPayload(j: TrialApiPayload): void {
+function applyServerPayload(j: TrialStatusResponse): void {
+  trialWhitelisted = j.whitelisted === true;
   secondsRemaining = j.secondsRemaining;
   limitSeconds = j.limitSeconds;
   checkoutUrl = j.checkoutUrl || "/checkout";
-  if (!j.allowed || j.secondsRemaining <= 0) {
+
+  if (trialWhitelisted) {
+    isBlocked = false;
+    clearTimers();
+    isCounting = false;
+    hideCountdownBadge();
+    document.body.classList.remove("trial-locked");
+    modalOverlay?.classList.add("trial-modal-overlay--hidden");
+    return;
+  }
+
+  if (isTrialExpiredFromPayload(j)) {
     isBlocked = true;
   } else {
     isBlocked = false;
@@ -159,7 +175,12 @@ function hideCountdownBadge(): void {
 }
 
 function showCountdownBadge(): void {
-  if (isBlocked || verificationError || trialBackendConfigError) {
+  if (
+    trialWhitelisted ||
+    isBlocked ||
+    verificationError ||
+    trialBackendConfigError
+  ) {
     hideCountdownBadge();
     return;
   }
@@ -244,9 +265,12 @@ async function runTrialIncrement(): Promise<void> {
     }
     const j = result.payload;
     applyServerPayload(j);
+    if (j.whitelisted === true) {
+      return;
+    }
     localTicksSinceSync = 0;
     updateTrialCountdownUI();
-    if (!j.allowed || j.secondsRemaining <= 0) {
+    if (isTrialExpiredFromPayload(j)) {
       enforceTrialExpiredFromServer();
     }
   } finally {
@@ -281,7 +305,13 @@ export function updateTrialCountdownUI(): void {
 }
 
 function startPlaybackAccounting(video: HTMLVideoElement): void {
-  if (isBlocked || verificationError || trialBackendConfigError) return;
+  if (
+    trialWhitelisted ||
+    isBlocked ||
+    verificationError ||
+    trialBackendConfigError
+  )
+    return;
   if (!videosMeetPlayingGate(video)) return;
 
   const resumeFromBufferHold =
@@ -324,12 +354,14 @@ function onTransientPlaybackStop(video: HTMLVideoElement): void {
 
 function attachVideoLifecycle(video: HTMLVideoElement): void {
   const onPlaying = (): void => {
+    if (trialWhitelisted) return;
     if (isBlocked || verificationError || trialBackendConfigError) {
       try {
         video.pause();
       } catch {
         /* ignore */
       }
+      showTrialExpiredModal();
       return;
     }
     if (!videosMeetPlayingGate(video)) return;
@@ -381,13 +413,46 @@ function ensureBadgeMounted(): void {
 function ensureModalMounted(): void {
   if (modalOverlay) return;
   const overlay = document.createElement("div");
-  overlay.className = "trial-modal-overlay trial-modal-overlay--hidden";
+  overlay.className =
+    "trial-offer-overlay trial-modal-overlay trial-modal-overlay--hidden";
   overlay.innerHTML = `
-    <div class="trial-modal-card" role="dialog" aria-modal="true" aria-labelledby="trial-modal-title">
-      <h2 id="trial-modal-title" class="trial-modal-title"></h2>
-      <p class="trial-modal-message"></p>
-      <p class="trial-modal-note"></p>
-      <button type="button" class="trial-modal-button primary"></button>
+    <div class="trial-offer-page">
+      <div class="trial-offer-card trial-modal-card" role="dialog" aria-modal="true" aria-labelledby="trial-offer-title">
+        <div class="trial-offer-sales hidden">
+          <div class="trial-offer-badge">VENTE FLASH -60%</div>
+          <p class="trial-offer-urgency">Aujourd’hui seulement</p>
+          <h2 id="trial-offer-title" class="trial-offer-title">Débloquez l’accès illimité à VeloraVIP</h2>
+          <p class="trial-offer-subtitle">Votre minute d’essai gratuite est terminée. Profitez maintenant de l’offre spéciale pour continuer à regarder vos chaînes, films et séries sans limite.</p>
+          <div class="trial-offer-highlight">
+            <span class="trial-offer-highlight-label">Offre spéciale aujourd’hui</span>
+            <span class="trial-offer-discount" aria-hidden="true">-60%</span>
+            <div class="trial-offer-highlight-row">
+              <span>Accès illimité</span>
+              <span class="trial-offer-highlight-dot">•</span>
+              <span>Tous les appareils inclus</span>
+            </div>
+          </div>
+          <ul class="trial-offer-benefits">
+            <li class="trial-offer-benefit">Plus de chaînes en direct</li>
+            <li class="trial-offer-benefit">Films et séries à la demande</li>
+            <li class="trial-offer-benefit">Compatible TV, tablette, mobile et ordinateur</li>
+            <li class="trial-offer-benefit">Fonctionne aussi sur Smart TV, Android Box et navigateur web</li>
+            <li class="trial-offer-benefit">Accès instantané après paiement</li>
+            <li class="trial-offer-benefit">Qualité HD / FHD selon disponibilité</li>
+          </ul>
+          <section class="trial-offer-devices" aria-labelledby="trial-offer-devices-heading">
+            <h3 id="trial-offer-devices-heading" class="trial-offer-devices-title">Regardez partout, sans exception</h3>
+            <p class="trial-offer-devices-text">Votre accès fonctionne sur TV, téléphone, tablette, ordinateur, Android Box et navigateur web.</p>
+          </section>
+          <button type="button" class="trial-offer-button trial-modal-button primary">Obtenir ma promo maintenant</button>
+          <p class="trial-offer-reassurance">Activation rapide • Accès immédiat • Offre limitée</p>
+        </div>
+        <div class="trial-offer-error hidden">
+          <h2 class="trial-modal-title trial-error-title"></h2>
+          <p class="trial-modal-message trial-error-message"></p>
+          <button type="button" class="trial-modal-button primary trial-error-retry">Réessayer</button>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -398,34 +463,41 @@ export function showTrialExpiredModal(messageOverride?: string): void {
   ensureModalMounted();
   if (!modalOverlay) return;
 
-  const titleEl = modalOverlay.querySelector(".trial-modal-title");
-  const msgEl = modalOverlay.querySelector(".trial-modal-message");
-  const noteEl = modalOverlay.querySelector(".trial-modal-note");
-  const btn = modalOverlay.querySelector(
-    ".trial-modal-button"
+  const salesEl = modalOverlay.querySelector(".trial-offer-sales");
+  const errorEl = modalOverlay.querySelector(".trial-offer-error");
+  const titleEl = modalOverlay.querySelector(".trial-error-title");
+  const msgEl = modalOverlay.querySelector(".trial-error-message");
+  const retryBtn = modalOverlay.querySelector(
+    ".trial-error-retry"
   ) as HTMLButtonElement | null;
-  if (!titleEl || !msgEl || !noteEl || !btn) return;
+  const offerBtn = modalOverlay.querySelector(
+    ".trial-offer-button"
+  ) as HTMLButtonElement | null;
+
+  if (!salesEl || !errorEl || !titleEl || !msgEl || !retryBtn || !offerBtn) {
+    return;
+  }
 
   void messageOverride;
 
   if (trialBackendConfigError) {
+    salesEl.classList.add("hidden");
+    errorEl.classList.remove("hidden");
     titleEl.textContent = "Configuration incomplète";
     msgEl.textContent =
       "Le système d’essai gratuit n’est pas encore configuré. Veuillez réessayer plus tard.";
-    noteEl.textContent = "";
-    noteEl.classList.add("hidden");
-    btn.textContent = "Réessayer";
-    btn.onclick = async (): Promise<void> => {
+    offerBtn.onclick = null;
+    retryBtn.onclick = async (): Promise<void> => {
       const result = await requestTrialStatus();
       if (result.ok) {
         trialBackendConfigError = false;
         verificationError = false;
         applyServerPayload(result.payload);
-        modalOverlay?.classList.add("trial-modal-overlay--hidden");
-        if (!result.payload.allowed) {
-          document.body.classList.add("trial-locked");
+        if (isTrialExpiredFromPayload(result.payload)) {
+          enforceTrialExpiredFromServer();
         } else {
           document.body.classList.remove("trial-locked");
+          modalOverlay?.classList.add("trial-modal-overlay--hidden");
         }
         return;
       }
@@ -434,24 +506,24 @@ export function showTrialExpiredModal(messageOverride?: string): void {
       showTrialExpiredModal();
     };
   } else if (verificationError) {
+    salesEl.classList.add("hidden");
+    errorEl.classList.remove("hidden");
     titleEl.textContent = "Vérification impossible";
     msgEl.textContent =
       "Impossible de vérifier votre accès. Veuillez réessayer.";
-    noteEl.textContent = "";
-    noteEl.classList.add("hidden");
-    btn.textContent = "Réessayer";
-    btn.onclick = async (): Promise<void> => {
+    offerBtn.onclick = null;
+    retryBtn.onclick = async (): Promise<void> => {
       verificationError = false;
       const result = await requestTrialStatus();
       if (result.ok) {
         trialBackendConfigError = false;
+        verificationError = false;
         applyServerPayload(result.payload);
-        modalOverlay?.classList.add("trial-modal-overlay--hidden");
-        document.body.classList.toggle("trial-locked", !result.payload.allowed);
-        if (!result.payload.allowed) {
-          isBlocked = true;
+        if (isTrialExpiredFromPayload(result.payload)) {
+          enforceTrialExpiredFromServer();
         } else {
-          isBlocked = false;
+          document.body.classList.remove("trial-locked");
+          modalOverlay?.classList.add("trial-modal-overlay--hidden");
         }
         return;
       }
@@ -465,18 +537,20 @@ export function showTrialExpiredModal(messageOverride?: string): void {
       showTrialExpiredModal();
     };
   } else {
-    titleEl.textContent = "Votre essai gratuit est terminé";
-    msgEl.textContent =
-      "Vous avez utilisé votre minute d’essai gratuite. Pour continuer à regarder sans limite, activez votre abonnement maintenant.";
-    noteEl.textContent = "Accès instantané après paiement.";
-    noteEl.classList.remove("hidden");
-    btn.textContent = "Obtenir un accès illimité";
-    btn.onclick = (): void => {
+    errorEl.classList.add("hidden");
+    salesEl.classList.remove("hidden");
+    retryBtn.onclick = null;
+    offerBtn.onclick = (): void => {
       window.location.href = checkoutUrl || "/checkout";
     };
   }
 
   modalOverlay.classList.remove("trial-modal-overlay--hidden");
+}
+
+/** Alias for the expired-trial sales surface (same overlay; idempotent). */
+export function showTrialOfferPage(): void {
+  showTrialExpiredModal();
 }
 
 export function initTrialGate(options?: { onTrialBlocked?: () => void }): void {
@@ -493,13 +567,14 @@ export function initTrialGate(options?: { onTrialBlocked?: () => void }): void {
         verificationError = true;
         trialBackendConfigError = false;
       }
+      showTrialExpiredModal();
       return;
     }
     trialBackendConfigError = false;
     verificationError = false;
     applyServerPayload(result.payload);
-    if (!result.payload.allowed) {
-      document.body.classList.add("trial-locked");
+    if (isTrialExpiredFromPayload(result.payload)) {
+      enforceTrialExpiredFromServer();
     } else {
       document.body.classList.remove("trial-locked");
     }
@@ -512,7 +587,11 @@ export function initTrialGate(options?: { onTrialBlocked?: () => void }): void {
 }
 
 export async function canStartPlayback(): Promise<boolean> {
-  if (isBlocked) return false;
+  if (trialWhitelisted) return true;
+  if (isBlocked) {
+    showTrialExpiredModal();
+    return false;
+  }
   try {
     const result = await requestTrialStatus();
     if (!result.ok) {
@@ -523,13 +602,14 @@ export async function canStartPlayback(): Promise<boolean> {
         verificationError = true;
         trialBackendConfigError = false;
       }
+      showTrialExpiredModal();
       return false;
     }
     trialBackendConfigError = false;
     verificationError = false;
     applyServerPayload(result.payload);
-    if (!result.payload.allowed) {
-      document.body.classList.add("trial-locked");
+    if (isTrialExpiredFromPayload(result.payload)) {
+      enforceTrialExpiredFromServer();
       return false;
     }
     document.body.classList.remove("trial-locked");
@@ -537,12 +617,14 @@ export async function canStartPlayback(): Promise<boolean> {
   } catch {
     verificationError = true;
     trialBackendConfigError = false;
+    showTrialExpiredModal();
     return false;
   }
 }
 
 export function markPlaybackStarted(videoElement?: HTMLVideoElement | null): void {
   const v = videoElement ?? null;
+  if (trialWhitelisted) return;
   if (!v || isBlocked || verificationError || trialBackendConfigError) return;
   if (!videosMeetPlayingGate(v)) return;
   startPlaybackAccounting(v);

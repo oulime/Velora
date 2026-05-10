@@ -1598,7 +1598,10 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   const onCtlPlay = (): void => {
     if (!isVodTranscode) return;
     if (video.paused) {
-      if (isTrialBlocked()) return;
+      if (isTrialBlocked()) {
+        showTrialExpiredModal();
+        return;
+      }
       void video.play().catch(() => {});
     } else video.pause();
   };
@@ -6263,7 +6266,10 @@ function toggleVideoPlayPause(ev: MouseEvent): void {
   if (y > r.height - controlsReservePx) return;
   ev.preventDefault();
   if (elVideo.paused) {
-    if (isTrialBlocked()) return;
+    if (isTrialBlocked()) {
+      showTrialExpiredModal();
+      return;
+    }
     void elVideo.play().catch(() => {});
   } else elVideo.pause();
 }
@@ -6279,7 +6285,10 @@ function toggleVideoPlayPauseVod(ev: MouseEvent): void {
   if (y > r.height - controlsReservePx) return;
   ev.preventDefault();
   if (elVideoVod.paused) {
-    if (isTrialBlocked()) return;
+    if (isTrialBlocked()) {
+      showTrialExpiredModal();
+      return;
+    }
     void elVideoVod.play().catch(() => {});
   } else elVideoVod.pause();
 }

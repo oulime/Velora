@@ -15,6 +15,7 @@ import {
   schedulePutCatalogToR2,
   tryGetCatalogFromR2,
 } from "./r2CatalogCacheShared.js";
+import { ensureProxyTrialAllowsRequest } from "./proxyTrialGate.js";
 
 const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
 
@@ -389,6 +390,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(400).send("Bad target");
     return;
   }
+
+  const trialOk = await ensureProxyTrialAllowsRequest(req, res, process.env);
+  if (!trialOk) return;
 
   if (!isAllowedTarget(target)) {
     let blockedHost = "(invalid)";

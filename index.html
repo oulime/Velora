@@ -104,6 +104,33 @@
             <div id="hf-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
           </section>
 
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Liste blanche IP</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Les adresses IP ajoutées ici peuvent regarder sans limite et ne sont pas bloquées par l’essai gratuit.
+            </p>
+            <p id="tw-status" class="status" aria-live="polite"></p>
+            <div class="field row">
+              <div>
+                <label for="tw-ip">Adresse IP</label>
+                <input id="tw-ip" type="text" placeholder="Adresse IP, ex: 192.168.1.10" autocomplete="off" />
+              </div>
+              <div>
+                <label for="tw-label">Libellé (optionnel)</label>
+                <input id="tw-label" type="text" placeholder="Nom ou description, ex: Mon téléphone" autocomplete="off" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="tw-notes">Notes (optionnel)</label>
+              <input id="tw-notes" type="text" placeholder="Notes internes" autocomplete="off" />
+            </div>
+            <div class="actions" style="flex-wrap: wrap; gap: 0.5rem">
+              <button type="button" id="tw-add" class="primary">Ajouter à la liste blanche</button>
+              <button type="button" id="tw-my-ip" class="countries-admin-cancel">Ajouter mon IP actuelle</button>
+            </div>
+            <div id="tw-wrap" class="countries-admin-table-wrap" style="margin-top: 1rem"></div>
+          </section>
+
           <section class="panel countries-admin-form vel-shell-bg-panel" style="margin-top: 1.75rem">
             <h2>Apparence — fond du lecteur</h2>
             <p class="countries-admin-intro" style="margin-top: 0">

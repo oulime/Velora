@@ -130,13 +130,51 @@ export async function incrementTrialUsageForIp(
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
 }
 
+export async function isTrialIpWhitelisted(
+  ip: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<boolean> {
+  try {
+    const sb = createSupabaseAdminClient(env);
+    const { data, error } = await sb.rpc("is_trial_ip_whitelisted", {
+      client_ip: ip,
+    });
+    if (error) {
+      console.warn("[trial] is_trial_ip_whitelisted:", error.message);
+      return false;
+    }
+    return data === true;
+  } catch (e) {
+    console.warn(
+      "[trial] whitelist check failed:",
+      e instanceof Error ? e.message : e
+    );
+    return false;
+  }
+}
+
 export type TrialApiPayload = {
   allowed: boolean;
+  whitelisted?: boolean;
   secondsUsed: number;
   secondsRemaining: number;
   limitSeconds: number;
   checkoutUrl: string;
 };
+
+export function buildWhitelistedTrialResponse(
+  env: NodeJS.ProcessEnv = process.env
+): TrialApiPayload {
+  const limit = getTrialLimitSeconds(env);
+  return {
+    allowed: true,
+    whitelisted: true,
+    secondsUsed: 0,
+    secondsRemaining: limit,
+    limitSeconds: limit,
+    checkoutUrl: getCheckoutUrl(env),
+  };
+}
 
 export function buildTrialResponse(
   secondsUsed: number,
@@ -187,6 +225,10 @@ export async function handleTrialStatus(
   }
   try {
     const ip = detectClientIp(req);
+    if (await isTrialIpWhitelisted(ip, env)) {
+      sendJson(res, 200, buildWhitelistedTrialResponse(env));
+      return;
+    }
     const used = await getTrialUsageForIp(ip, env);
     sendJson(res, 200, buildTrialResponse(used, env));
   } catch (e) {
@@ -212,6 +254,10 @@ export async function handleTrialIncrement(
   }
   try {
     const ip = detectClientIp(req);
+    if (await isTrialIpWhitelisted(ip, env)) {
+      sendJson(res, 200, buildWhitelistedTrialResponse(env));
+      return;
+    }
     const limit = getTrialLimitSeconds(env);
     const used = await getTrialUsageForIp(ip, env);
     if (used >= limit) {
