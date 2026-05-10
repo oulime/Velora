@@ -4914,6 +4914,34 @@ body.vel-vod-fullscreen-active .main--velora {
   display: none !important;
 }
 
+.cover-crop-fill-gradient-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: 100%;
+}
+
+.cover-crop-fill-gradient-block.hidden {
+  display: none !important;
+}
+
+.cover-crop-fill__select--gradient-kind {
+  width: 100%;
+  max-width: 100%;
+}
+
+.cover-crop-fill-subrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  width: 100%;
+}
+
+.cover-crop-fill-subrow.hidden {
+  display: none !important;
+}
+
 .cover-crop-fill-row--gradient input[type="range"] {
   flex: 1;
   min-width: 5rem;

@@ -492,12 +492,46 @@
             <label for="crop-sq-fill">Couleur</label>
             <input type="color" id="crop-sq-fill" value="#141118" title="Fond autour de l’image">
           </div>
-          <div id="crop-sq-fill-gradient-row" class="cover-crop-fill-row cover-crop-fill-row--gradient hidden">
-            <label for="crop-sq-fill-end">Couleur fin</label>
-            <input type="color" id="crop-sq-fill-end" value="#3d2a55" title="Deuxième couleur du dégradé">
-            <label for="crop-sq-gradient-angle" class="cover-crop-fill-row__angle-label">Angle</label>
-            <input type="range" id="crop-sq-gradient-angle" min="0" max="360" value="145" step="1" title="Angle du dégradé (°)">
-            <span id="crop-sq-gradient-angle-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">145°</span>
+          <div id="crop-sq-fill-gradient-row" class="cover-crop-fill-gradient-block hidden">
+            <div class="cover-crop-fill-row cover-crop-fill-row--gradient">
+              <label for="crop-sq-gradient-kind">Style</label>
+              <select id="crop-sq-gradient-kind" class="admin-add-package-dialog__select cover-crop-fill__select cover-crop-fill__select--gradient-kind" title="Type de dégradé">
+                <option value="linear">Linéaire (angle libre)</option>
+                <option value="linear_h">Linéaire · horizontal</option>
+                <option value="linear_v">Linéaire · vertical</option>
+                <option value="radial">Radial (cercle)</option>
+                <option value="conic">Conique (circulaire)</option>
+              </select>
+            </div>
+            <div class="cover-crop-fill-row cover-crop-fill-row--gradient">
+              <label for="crop-sq-fill-start">Couleur début</label>
+              <input type="color" id="crop-sq-fill-start" value="#141118" title="Première couleur du dégradé">
+              <label for="crop-sq-fill-end">Couleur fin</label>
+              <input type="color" id="crop-sq-fill-end" value="#3d2a55" title="Deuxième couleur du dégradé">
+            </div>
+            <div class="cover-crop-fill-subrow cover-crop-fill-row--gradient">
+              <label for="crop-sq-gradient-balance" title="100 % début, 0 % fin">Répartition début / fin</label>
+              <input type="range" id="crop-sq-gradient-balance" min="0" max="100" value="50" step="1" title="100 % : tout en couleur début">
+              <span id="crop-sq-gradient-balance-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">50%</span>
+            </div>
+            <div id="crop-sq-gradient-angle-wrap" class="cover-crop-fill-subrow cover-crop-fill-row--gradient">
+              <label for="crop-sq-gradient-angle" id="crop-sq-gradient-angle-label" class="cover-crop-fill-row__angle-label">Angle</label>
+              <input type="range" id="crop-sq-gradient-angle" min="0" max="360" value="145" step="1" title="Angle (°)">
+              <span id="crop-sq-gradient-angle-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">145°</span>
+            </div>
+            <div class="cover-crop-fill-subrow cover-crop-fill-row--gradient">
+              <label for="crop-sq-gradient-cx" title="Ancrage ou centre horizontal">Position X</label>
+              <input type="range" id="crop-sq-gradient-cx" min="0" max="100" value="50" step="1" title="0 = gauche, 100 = droite">
+              <span id="crop-sq-gradient-cx-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">50%</span>
+              <label for="crop-sq-gradient-cy" title="Ancrage ou centre vertical">Position Y</label>
+              <input type="range" id="crop-sq-gradient-cy" min="0" max="100" value="50" step="1" title="0 = haut, 100 = bas">
+              <span id="crop-sq-gradient-cy-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">50%</span>
+            </div>
+            <div id="crop-sq-gradient-radial-wrap" class="cover-crop-fill-subrow cover-crop-fill-row--gradient hidden">
+              <label for="crop-sq-gradient-radius">Extension radial</label>
+              <input type="range" id="crop-sq-gradient-radius" min="25" max="200" value="100" step="1" title="Taille du cercle (%)">
+              <span id="crop-sq-gradient-radius-val" class="cover-crop-fill-row__angle-val" aria-hidden="true">100%</span>
+            </div>
           </div>
         </div>
         <div class="cover-crop-zoom">
