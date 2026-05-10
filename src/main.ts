@@ -83,6 +83,13 @@ import {
   invalidatePackageImageThemeCache,
 } from "./packageImageTheme";
 import { applyVeloraShellBgToMain } from "./veloraShellBackground";
+import {
+  initTrialGate,
+  canStartPlayback,
+  markPlaybackStopped,
+  showTrialExpiredModal,
+  isTrialBlocked,
+} from "./trialGate";
 
 type ServerInfo = {
   url: string;
@@ -1698,6 +1705,7 @@ function setPlayerBufferingVisible(visible: boolean): void {
 
 /** Stop HLS / native playback without hiding the player shell (used when switching stream). */
 function teardownPlaybackMedia(): void {
+  markPlaybackStopped(elVideo);
   primaryPlaybackKeepAliveCleanup?.();
   primaryPlaybackKeepAliveCleanup = null;
   nodecastStatusPollingCleanup?.();
@@ -1809,6 +1817,7 @@ function setVodPlayerBufferingVisible(visible: boolean): void {
 
 function teardownVodMedia(): void {
   if (!elVideoVod) return;
+  markPlaybackStopped(elVideoVod);
   nodecastStatusPollingCleanup?.();
   nodecastStatusPollingCleanup = null;
   teardownVodPlaybackHelpers();
@@ -1874,6 +1883,10 @@ function playUrl(
   /** Live HLS (direct Xtream / chaîne Nodecast) : masque la barre de progression native (flux non borné). */
   hideNativeProgressBar = false
 ): void {
+  if (isTrialBlocked()) {
+    showTrialExpiredModal();
+    return;
+  }
   destroyVodPlayer();
   teardownPlaybackMedia();
   attachNodecastStatusPollingForPlayback();
@@ -1988,6 +2001,10 @@ function playUrl(
 /** Lecteur VOD : `<video>` et instance HLS séparées du direct TV. */
 function playVodUrl(url: string, label: string, upstreamAuth?: Record<string, string>): void {
   if (!elVideoVod || !elNowPlayingVod) return;
+  if (isTrialBlocked()) {
+    showTrialExpiredModal();
+    return;
+  }
   vodPlaybackSessionId += 1;
   const sessionId = vodPlaybackSessionId;
   setVodPlayerBufferingVisible(true);
@@ -5497,6 +5514,11 @@ function onTabClick(tab: UiTab): void {
 
 async function playStreamByMode(s: LiveStream): Promise<void> {
   if (!state) return;
+  const trialOk = await canStartPlayback();
+  if (!trialOk) {
+    showTrialExpiredModal();
+    return;
+  }
   const isVodFilm = s.nodecast_media === "vod";
   const hideLiveProgress = !isVodFilm && s.nodecast_media !== "series";
 
@@ -5866,6 +5888,15 @@ elTabSeries.addEventListener("click", () => onTabClick("series"));
 elCountrySelect.addEventListener("change", onCountryChange);
 
 applyNodecastEnvDefaults();
+
+initTrialGate({
+  onTrialBlocked: () => {
+    destroyPlayer();
+    destroyVodPlayer();
+    setPlayerBufferingVisible(false);
+    setVodPlayerBufferingVisible(false);
+  },
+});
 
 if (envAutoConnectConfigured()) {
   elHeaderLoginOnly?.classList.add("hidden");

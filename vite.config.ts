@@ -14,6 +14,7 @@ import {
   tryGetCatalogFromR2,
 } from "./api/r2CatalogCacheShared";
 import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
+import { handleTrialIncrement, handleTrialStatus } from "./api/trialShared";
 
 import { cloudflare } from "@cloudflare/vite-plugin";
 
@@ -759,6 +760,44 @@ export default defineConfig(({ mode }) => {
           }
           const merged = { ...process.env, ...loadEnv(server.config.mode, process.cwd(), "") };
           void handleR2PackageCoverRoute(req, res, merged);
+        });
+      },
+    }, {
+      name: "trial-api-dev",
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const pathOnly = (req.url ?? "").split("?")[0];
+          const merged = {
+            ...process.env,
+            ...loadEnv(server.config.mode, process.cwd(), ""),
+          };
+          if (pathOnly === "/api/trial-status" && req.method === "GET") {
+            void handleTrialStatus(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/trial-increment" && req.method === "POST") {
+            void handleTrialIncrement(req, res, merged);
+            return;
+          }
+          next();
+        });
+      },
+      configurePreviewServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const pathOnly = (req.url ?? "").split("?")[0];
+          const merged = {
+            ...process.env,
+            ...loadEnv(server.config.mode, process.cwd(), ""),
+          };
+          if (pathOnly === "/api/trial-status" && req.method === "GET") {
+            void handleTrialStatus(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/trial-increment" && req.method === "POST") {
+            void handleTrialIncrement(req, res, merged);
+            return;
+          }
+          next();
         });
       },
     }, {
