@@ -5442,6 +5442,23 @@ body.vel-vod-fullscreen-active .main--velora {
   font-size: 0.95rem;
 }
 
+.countries-admin-entries-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.65rem;
+}
+
+.countries-admin-entries-head h2 {
+  margin: 0;
+}
+
+.countries-admin-io.actions {
+  margin: 0;
+}
+
 .countries-admin-table-wrap {
   overflow-x: auto;
 }

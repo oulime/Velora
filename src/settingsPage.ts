@@ -163,6 +163,39 @@ async function mountSettingsTable(): Promise<void> {
       clearCountryEdit();
       setStatus("Modification annulée.");
     });
+    const elExportJson = document.getElementById("cc-export-json");
+    const elImportJson = document.getElementById("cc-import-json");
+    const elImportFile = document.getElementById("cc-import-json-file") as HTMLInputElement | null;
+    elExportJson?.addEventListener("click", () => void exportCountriesCorrespondancesJson());
+    elImportJson?.addEventListener("click", () => {
+      if (elImportFile) elImportFile.value = "";
+      elImportFile?.click();
+    });
+    elImportFile?.addEventListener("change", () => {
+      const f = elImportFile.files?.[0];
+      if (!f) return;
+      void (async () => {
+        try {
+          const text = await f.text();
+          const entries = parseCorrespondancesImportJson(text);
+          const n = entries.length;
+          const msgEmpty =
+            n === 0
+              ? "Le fichier remplace toutes les entrées par une liste vide : le lecteur utilisera la liste intégrée. Confirmer ?"
+              : `Remplacer toutes les correspondances actuelles par les ${n} entrée(s) du fichier ? Les entrées actuelles seront supprimées.`;
+          if (!window.confirm(msgEmpty)) {
+            setStatus("Import annulé.");
+            return;
+          }
+          await replaceCountriesFromImport(entries);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setStatus(msg, true);
+        } finally {
+          elImportFile.value = "";
+        }
+      })();
+    });
     settingsControlsBound = true;
   }
 
@@ -254,6 +287,141 @@ async function mountSettingsTable(): Promise<void> {
       setStatus(error.message, true);
       return;
     }
+    await loadRows();
+  }
+
+  type CountryCorrespondenceExport = {
+    match_key: string;
+    display_name: string;
+    sort_order: number;
+  };
+
+  function chunkIds(ids: string[], size: number): string[][] {
+    const out: string[][] = [];
+    for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+    return out;
+  }
+
+  function parseCorrespondancesImportJson(text: string): CountryCorrespondenceExport[] {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error("Fichier JSON invalide (parse).");
+    }
+    let rawList: unknown[];
+    if (Array.isArray(parsed)) {
+      rawList = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      const o = parsed as Record<string, unknown>;
+      const inner = o.correspondances ?? o.canonical_countries ?? o.entries;
+      if (!Array.isArray(inner)) {
+        throw new Error(
+          "Format attendu : un tableau, ou un objet avec une propriété « correspondances », « canonical_countries » ou « entries » (tableau).",
+        );
+      }
+      rawList = inner;
+    } else {
+      throw new Error("Le JSON doit être un tableau ou un objet contenant un tableau.");
+    }
+    const byKey = new Map<string, CountryCorrespondenceExport>();
+    for (const item of rawList) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const match_key =
+        typeof rec.match_key === "string" ? rec.match_key.trim().replace(/\s+/g, " ") : "";
+      const display_name = typeof rec.display_name === "string" ? rec.display_name.trim() : "";
+      if (!match_key || !display_name) continue;
+      let sort_order = 0;
+      if (typeof rec.sort_order === "number" && Number.isFinite(rec.sort_order)) {
+        sort_order = Math.trunc(rec.sort_order);
+      }
+      byKey.set(match_key, { match_key, display_name, sort_order });
+    }
+    const list = [...byKey.values()].sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return a.display_name.localeCompare(b.display_name, "fr");
+    });
+    if (rawList.length > 0 && list.length === 0) {
+      throw new Error(
+        "Aucune entrée valide : chaque ligne doit avoir « match_key » et « display_name » (chaînes non vides).",
+      );
+    }
+    return list;
+  }
+
+  async function exportCountriesCorrespondancesJson(): Promise<void> {
+    if (!supabase) {
+      setStatus("Variables NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY requises.", true);
+      return;
+    }
+    setStatus("Export…");
+    const { data, error } = await supabase
+      .from("canonical_countries")
+      .select("match_key, display_name, sort_order")
+      .order("sort_order", { ascending: true })
+      .order("display_name", { ascending: true });
+    if (error) {
+      setStatus(error.message, true);
+      return;
+    }
+    const rows = (data ?? []) as CountryCorrespondenceExport[];
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      correspondances: rows,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const d = new Date();
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    a.href = url;
+    a.download = `velora-pays-correspondances-${stamp}.json`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus(`Export téléchargé (${rows.length} correspondance(s)).`);
+  }
+
+  async function replaceCountriesFromImport(entries: CountryCorrespondenceExport[]): Promise<void> {
+    if (!supabase) return;
+    setStatus("Suppression des entrées actuelles…");
+    const { data: idRows, error: selErr } = await supabase.from("canonical_countries").select("id");
+    if (selErr) {
+      setStatus(selErr.message, true);
+      return;
+    }
+    const ids = (idRows ?? []).map((r: { id: string }) => r.id);
+    for (const part of chunkIds(ids, 400)) {
+      if (part.length === 0) continue;
+      const { error: delErr } = await supabase.from("canonical_countries").delete().in("id", part);
+      if (delErr) {
+        setStatus(delErr.message, true);
+        await loadRows();
+        return;
+      }
+    }
+    clearCountryEdit();
+    const INSERT_CHUNK = 80;
+    for (let i = 0; i < entries.length; i += INSERT_CHUNK) {
+      setStatus(`Import… ${Math.min(i + INSERT_CHUNK, entries.length)} / ${entries.length}`);
+      const slice = entries.slice(i, i + INSERT_CHUNK).map((e) => ({
+        match_key: e.match_key,
+        display_name: e.display_name,
+        sort_order: e.sort_order,
+      }));
+      const { error: insErr } = await supabase.from("canonical_countries").insert(slice);
+      if (insErr) {
+        setStatus(insErr.message, true);
+        await loadRows();
+        return;
+      }
+    }
+    setStatus(`Import terminé (${entries.length} correspondance(s)).`);
     await loadRows();
   }
 

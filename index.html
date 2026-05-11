@@ -61,7 +61,24 @@
           </section>
 
           <section class="panel countries-admin-list-wrap">
-            <h2>Entrées</h2>
+            <div class="countries-admin-entries-head">
+              <h2>Entrées</h2>
+              <div class="countries-admin-io actions">
+                <button type="button" id="cc-export-json" class="secondary">
+                  Exporter JSON
+                </button>
+                <button type="button" id="cc-import-json" class="secondary">
+                  Importer JSON
+                </button>
+                <input
+                  type="file"
+                  id="cc-import-json-file"
+                  class="hidden"
+                  accept="application/json,.json"
+                  aria-label="Fichier JSON des correspondances pays"
+                />
+              </div>
+            </div>
             <div id="cc-table-wrap" class="countries-admin-table-wrap"></div>
           </section>
 
