@@ -424,6 +424,9 @@
                 <span class="back-btn__text">Accueil</span>
               </button>
               <div id="vel-admin-add-channels-wrap" class="vel-admin-add-channels-wrap hidden">
+                <button type="button" id="btn-admin-select-all-channels" class="vel-admin-add-channels-btn">
+                  Tout sélectionner
+                </button>
                 <button type="button" id="btn-admin-add-channels" class="vel-admin-add-channels-btn">
                   + Ajouter des chaînes au bouquet
                 </button>
@@ -608,8 +611,8 @@
 
     <dialog id="dialog-channel-assign" class="admin-channel-assign-dialog">
       <div class="admin-add-package-dialog__panel">
-        <h2 class="admin-add-package-dialog__title">Affecter la chaîne</h2>
-        <p class="admin-add-package-dialog__hint">
+        <h2 id="channel-assign-title" class="admin-add-package-dialog__title">Affecter la chaîne</h2>
+        <p id="channel-assign-hint" class="admin-add-package-dialog__hint">
           Choisissez un bouquet du pays actuel. La chaîne disparaît du bouquet d’origine pour tous les visiteurs.
         </p>
         <div class="field">

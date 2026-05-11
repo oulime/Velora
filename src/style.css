@@ -3967,6 +3967,8 @@ body.vel-vod-fullscreen-active .main--velora {
   flex: 1;
   min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 0.45rem;
   justify-content: flex-end;
 }
 
@@ -4396,6 +4398,14 @@ body.vel-vod-fullscreen-active .main--velora {
   gap: 6px;
   width: 100%;
   min-width: 0;
+}
+
+.vel-channel-select {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  margin: 0 0.1rem 0 0.2rem;
 }
 
 .vel-channel-drag-handle {

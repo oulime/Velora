@@ -242,9 +242,12 @@ let dapCoverPreviewObjectUrl: string | null = null;
 const elDialogChannelAssign = document.getElementById("dialog-channel-assign") as HTMLDialogElement | null;
 const elChannelAssignSelect = document.getElementById("channel-assign-package") as HTMLSelectElement | null;
 const elChannelAssignStatus = document.getElementById("channel-assign-status") as HTMLParagraphElement | null;
+const elChannelAssignTitle = document.getElementById("channel-assign-title") as HTMLHeadingElement | null;
+const elChannelAssignHint = document.getElementById("channel-assign-hint") as HTMLParagraphElement | null;
 const elChannelAssignCancel = document.getElementById("channel-assign-cancel") as HTMLButtonElement | null;
 const elChannelAssignOk = document.getElementById("channel-assign-ok") as HTMLButtonElement | null;
-let pendingAssignStreamId: number | null = null;
+let pendingAssignStreamIds: number[] = [];
+const selectedAdminChannelStreamIds = new Set<number>();
 
 const elDialogAddChannels = document.getElementById("dialog-admin-add-channels") as HTMLDialogElement | null;
 const elAddChannelsHint = document.getElementById("add-channels-package-hint") as HTMLParagraphElement | null;
@@ -255,6 +258,7 @@ const elAddChannelsCancel = document.getElementById("add-channels-cancel") as HT
 const elAddChannelsSubmit = document.getElementById("add-channels-submit") as HTMLButtonElement | null;
 const elAddChannelsSelectVisible = document.getElementById("add-channels-select-visible") as HTMLButtonElement | null;
 const elBtnAdminAddChannels = document.getElementById("btn-admin-add-channels") as HTMLButtonElement | null;
+const elBtnAdminSelectAllChannels = document.getElementById("btn-admin-select-all-channels") as HTMLButtonElement | null;
 
 const elPlayerContainer = $("#player-container") as HTMLElement;
 const elBtnClosePlayer = document.getElementById("btn-close-player") as HTMLButtonElement | null;
@@ -2623,17 +2627,33 @@ function populateChannelAssignPackageSelect(): void {
   }
 }
 
-function openChannelAssignDialog(streamId: number): void {
+function openChannelAssignDialog(streamIds: number | number[]): void {
   if (!elDialogChannelAssign || !elChannelAssignSelect) return;
-  pendingAssignStreamId = streamId;
+  const rawList = Array.isArray(streamIds) ? streamIds : [streamIds];
+  const normalized = [...new Set(rawList.filter((id) => Number.isFinite(id)).map((id) => Number(id)))];
+  if (normalized.length < 1) return;
+  pendingAssignStreamIds = normalized;
   elChannelAssignStatus && (elChannelAssignStatus.textContent = "");
   elChannelAssignStatus?.classList.remove("error");
+  if (elChannelAssignTitle) {
+    elChannelAssignTitle.textContent =
+      normalized.length > 1 ? "Affecter les chaînes" : "Affecter la chaîne";
+  }
+  if (elChannelAssignHint) {
+    elChannelAssignHint.textContent =
+      normalized.length > 1
+        ? `${normalized.length} chaînes sélectionnées. Choisissez un bouquet du pays actuel. Elles disparaissent de leur bouquet d’origine pour tous les visiteurs.`
+        : "Choisissez un bouquet du pays actuel. La chaîne disparaît du bouquet d’origine pour tous les visiteurs.";
+  }
+  if (elChannelAssignOk) {
+    elChannelAssignOk.textContent = normalized.length > 1 ? "Déplacer la sélection" : "OK";
+  }
   populateChannelAssignPackageSelect();
   elDialogChannelAssign.showModal();
 }
 
 function closeChannelAssignDialog(): void {
-  pendingAssignStreamId = null;
+  pendingAssignStreamIds = [];
   elDialogChannelAssign?.close();
 }
 
@@ -3529,6 +3549,9 @@ function renderPackageChannelList(): void {
   const alphaIdsForDrag =
     pkgIdForDrag != null ? liveStreamsAlphaForPackage(pkgIdForDrag).map((x) => x.stream_id) : [];
   const visibleIdSetForDrag = new Set(filtered.map((x) => x.stream_id));
+  for (const sid of [...selectedAdminChannelStreamIds]) {
+    if (!visibleIdSetForDrag.has(sid)) selectedAdminChannelStreamIds.delete(sid);
+  }
 
   prependVelListingCategoryHeader("live");
 
@@ -3536,6 +3559,23 @@ function renderPackageChannelList(): void {
     const row = document.createElement("div");
     row.className = "vel-media-item-row";
     row.dataset.streamId = String(s.stream_id);
+
+    if (adminTools) {
+      const selectCb = document.createElement("input");
+      selectCb.type = "checkbox";
+      selectCb.className = "vel-channel-select";
+      selectCb.checked = selectedAdminChannelStreamIds.has(s.stream_id);
+      selectCb.title = "Sélectionner pour déplacement groupé";
+      selectCb.setAttribute("aria-label", `Sélectionner ${displayChannelName(s.name)}`);
+      selectCb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+      });
+      selectCb.addEventListener("change", () => {
+        if (selectCb.checked) selectedAdminChannelStreamIds.add(s.stream_id);
+        else selectedAdminChannelStreamIds.delete(s.stream_id);
+      });
+      row.appendChild(selectCb);
+    }
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -3686,7 +3726,10 @@ function renderPackageChannelList(): void {
       btnAssign.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        openChannelAssignDialog(s.stream_id);
+        const selectedIds = selectedAdminChannelStreamIds.has(s.stream_id)
+          ? [...selectedAdminChannelStreamIds]
+          : [s.stream_id];
+        openChannelAssignDialog(selectedIds);
       });
 
       const btnRemove = document.createElement("button");
@@ -3698,10 +3741,23 @@ function renderPackageChannelList(): void {
       btnRemove.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        if (!window.confirm("Retirer cette chaîne de toutes les listes ?")) return;
+        const selectedIds = selectedAdminChannelStreamIds.has(s.stream_id)
+          ? [...selectedAdminChannelStreamIds]
+          : [s.stream_id];
+        const confirmMsg =
+          selectedIds.length > 1
+            ? `Retirer ces ${selectedIds.length} chaînes de toutes les listes ?`
+            : "Retirer cette chaîne de toutes les listes ?";
+        if (!window.confirm(confirmMsg)) return;
         void (async () => {
-          const ok = await persistStreamCuration(s.stream_id, STREAM_CURATION_HIDDEN);
-          if (ok) renderPackageChannelList();
+          let ok = 0;
+          for (const sid of selectedIds) {
+            if (await persistStreamCuration(sid, STREAM_CURATION_HIDDEN)) ok++;
+          }
+          if (ok > 0) {
+            selectedIds.forEach((sid) => selectedAdminChannelStreamIds.delete(sid));
+            renderPackageChannelList();
+          }
         })();
       });
 
@@ -5646,13 +5702,18 @@ elChannelAssignCancel?.addEventListener("click", () => closeChannelAssignDialog(
 elDialogChannelAssign?.addEventListener("cancel", () => closeChannelAssignDialog());
 elChannelAssignOk?.addEventListener("click", () => {
   void (async () => {
-    if (pendingAssignStreamId == null || !elChannelAssignSelect) return;
+    if (pendingAssignStreamIds.length < 1 || !elChannelAssignSelect) return;
     const pkgId = elChannelAssignSelect.value?.trim();
     if (!pkgId) return;
     elChannelAssignStatus && (elChannelAssignStatus.textContent = "");
     elChannelAssignStatus?.classList.remove("error");
-    const ok = await persistStreamCuration(pendingAssignStreamId, pkgId);
-    if (!ok) {
+    let ok = 0;
+    let fail = 0;
+    for (const sid of pendingAssignStreamIds) {
+      if (await persistStreamCuration(sid, pkgId)) ok++;
+      else fail++;
+    }
+    if (ok < 1) {
       if (elChannelAssignStatus) {
         elChannelAssignStatus.textContent =
           "Échec de l’enregistrement. Vérifiez la table admin_stream_curations dans Supabase.";
@@ -5660,6 +5721,12 @@ elChannelAssignOk?.addEventListener("click", () => {
       }
       return;
     }
+    if (fail > 0 && elChannelAssignStatus) {
+      elChannelAssignStatus.textContent = `${ok} chaîne(s) déplacée(s), ${fail} erreur(s).`;
+      elChannelAssignStatus.classList.add("error");
+      return;
+    }
+    pendingAssignStreamIds.forEach((sid) => selectedAdminChannelStreamIds.delete(sid));
     closeChannelAssignDialog();
     renderPackageChannelList();
     if (state && uiShell === "packages" && isPackagesGridTab()) {
@@ -5670,6 +5737,18 @@ elChannelAssignOk?.addEventListener("click", () => {
 
 elBtnAdminAddChannels?.addEventListener("click", () => {
   openAddChannelsToPackageDialog();
+});
+
+elBtnAdminSelectAllChannels?.addEventListener("click", () => {
+  if (!showAdminChannelCurateTools() || uiShell !== "content" || uiTab !== "live" || uiAdminPackageId == null) {
+    return;
+  }
+  const boxes = elDynamicList.querySelectorAll<HTMLInputElement>(".vel-channel-select");
+  boxes.forEach((cb) => {
+    const sid = Number(cb.closest<HTMLElement>(".vel-media-item-row")?.dataset.streamId);
+    if (Number.isFinite(sid)) selectedAdminChannelStreamIds.add(sid);
+    cb.checked = true;
+  });
 });
 
 elAddChannelsCancel?.addEventListener("click", () => closeAddChannelsToPackageDialog());
