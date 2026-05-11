@@ -59,6 +59,7 @@ import { runCoverSquareCrop } from "./coverSquareCrop";
 import {
   FRANCE_SYNTH_PACKAGES,
   STREAM_CURATION_HIDDEN,
+  autoSynthPackageIdForStreamName,
   collectStreamsFromProviderCategories,
   listStreamsForOpenedPackage,
 } from "./franceStreamCuration";
@@ -2643,6 +2644,32 @@ function candidatesStreamsNotInOpenPackage(packageId: string): LiveStream[] {
     .sort((a, b) => displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr"));
 }
 
+/** Bouquet catalogue / curation où la chaîne apparaît aujourd’hui (hors bouquet ouvert). */
+function liveStreamCurrentCatalogPackageName(streamId: number): string {
+  if (!state) return "—";
+  const cur = curationMapForSelection()?.get(streamId) ?? null;
+  if (cur === STREAM_CURATION_HIDDEN) return "Masquée (curation)";
+  if (cur && cur.length > 0) {
+    const p = findPackageById(cur);
+    return p?.name ?? cur;
+  }
+  const s = unionStreamsForCurrentCountry().find((x) => x.stream_id === streamId);
+  if (!s) return "—";
+  if (isSelectedCountryFrance()) {
+    const syn = autoSynthPackageIdForStreamName(s.name, true);
+    if (syn) {
+      const p = findPackageById(syn);
+      return p?.name ?? syn;
+    }
+  }
+  for (const pkg of packagesForSelectedCountry()) {
+    if (isLikelyUuid(pkg.id)) continue;
+    const natives = state.streamsByCatAll.get(pkg.id) ?? [];
+    if (natives.some((r) => r.stream_id === streamId)) return pkg.name;
+  }
+  return "Catalogue";
+}
+
 function filterAddChannelsListRows(): void {
   if (!elAddChannelsSearch || !elAddChannelsList) return;
   const q = elAddChannelsSearch.value.trim().toLowerCase();
@@ -2660,17 +2687,24 @@ function buildAddChannelsDialogList(packageId: string): void {
   for (const s of cand) {
     const row = document.createElement("div");
     row.className = "add-channels-row";
-    const hay = `${displayChannelName(s.name)} ${s.name}`.replace(/\s+/g, " ").trim();
+    const pkgName = liveStreamCurrentCatalogPackageName(s.stream_id);
+    const hay = `${displayChannelName(s.name)} ${s.name} ${pkgName}`.replace(/\s+/g, " ").trim();
     row.dataset.searchHay = hay;
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.id = `add-ch-${s.stream_id}`;
     cb.dataset.streamId = String(s.stream_id);
+    const body = document.createElement("div");
+    body.className = "add-channels-row__body";
     const lab = document.createElement("label");
     lab.htmlFor = cb.id;
     lab.textContent = displayChannelName(s.name);
     lab.title = s.name;
-    row.append(cb, lab);
+    const pkgEl = document.createElement("span");
+    pkgEl.className = "add-channels-row__package";
+    pkgEl.textContent = `Bouquet actuel : ${pkgName}`;
+    body.append(lab, pkgEl);
+    row.append(cb, body);
     elAddChannelsList.appendChild(row);
   }
   if (cand.length === 0) {
@@ -2689,7 +2723,7 @@ function openAddChannelsToPackageDialog(): void {
   const pkg = findPackageById(uiAdminPackageId);
   const label = pkg?.name ?? uiAdminPackageId;
   if (elAddChannelsHint) {
-    elAddChannelsHint.textContent = `Bouquet « ${label} » — les chaînes ajoutées disparaissent des autres bouquets de ce pays.`;
+    elAddChannelsHint.textContent = `Destination : bouquet « ${label} ». Chaque ligne indique le bouquet actuel de la chaîne. L’ajout la retire des autres bouquets de ce pays.`;
   }
   if (elAddChannelsSearch) elAddChannelsSearch.value = "";
   elAddChannelsStatus && (elAddChannelsStatus.textContent = "");
@@ -4657,11 +4691,12 @@ function renderPackagesGrid(): void {
   if (showAdminLiveGridExtras) appendAddPackageCard();
 
   const orderedPkgs = applySavedPackageGridOrder(mergedPackagesForGrid(), getSavedPackageGridOrder(uiTab));
-  const pkgs = isAdminSession()
-    ? orderedPkgs
-    : orderedPkgs.filter(
-        (pkg) => !isSoftDeletedNonDbPackage(pkg.id) && streamsDisplayedForOpenPackage(pkg.id).length > 0
-      );
+  /** Admin (?admin=1) : tous les bouquets y compris catalogue « supprimés » (masqués visiteurs). Visiteurs : hors supprimés et sans chaînes vides. */
+  const pkgs = orderedPkgs.filter((pkg) => {
+    if (isAdminSession()) return true;
+    if (isSoftDeletedNonDbPackage(pkg.id)) return false;
+    return streamsDisplayedForOpenPackage(pkg.id).length > 0;
+  });
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
     const isSoftDeleted = isSoftDeletedNonDbPackage(pkg.id);
@@ -5060,6 +5095,16 @@ async function deletePackageById(packageId: string): Promise<void> {
       setLoginStatus(res.error, true);
       return;
     }
+    const prevOv = packageCoverOverrideById.get(packageId);
+    packageCoverOverrideById.set(packageId, {
+      cover_url: prevOv?.cover_url ?? null,
+      theme_bg: prevOv?.theme_bg ?? null,
+      theme_surface: prevOv?.theme_surface ?? null,
+      theme_primary: prevOv?.theme_primary ?? null,
+      theme_glow: prevOv?.theme_glow ?? null,
+      theme_back: prevOv?.theme_back ?? null,
+      deleted: !isDeleted,
+    });
   }
   await refreshSupabaseHierarchy();
   if (state && uiShell === "packages" && isPackagesGridTab()) {

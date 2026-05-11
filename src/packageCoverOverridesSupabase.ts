@@ -27,6 +27,11 @@ export type PackageCoverOverrideEntry = {
   deleted: boolean;
 };
 
+function rowDeletedFlag(row: Record<string, unknown>): boolean {
+  const v = row.deleted;
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
 function rowToEntry(row: Record<string, unknown>): PackageCoverOverrideEntry {
   const s = (v: unknown): string | null => {
     if (typeof v !== "string") return null;
@@ -40,7 +45,7 @@ function rowToEntry(row: Record<string, unknown>): PackageCoverOverrideEntry {
     theme_primary: s(row.theme_primary),
     theme_glow: s(row.theme_glow),
     theme_back: s(row.theme_back),
-    deleted: row.deleted === true,
+    deleted: rowDeletedFlag(row),
   };
 }
 
