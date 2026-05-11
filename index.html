@@ -66,6 +66,61 @@
           </section>
 
           <section class="panel countries-admin-form" style="margin-top: 1.75rem">
+            <h2>Bouquets visibles pour tous les pays</h2>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Un <strong>nom de bouquet tel que renvoyé par Nodecast</strong> par ligne (même libellé que dans le
+              catalogue : direct, films ou séries selon l’onglet actif). Retours à la ligne, virgules ou
+              points-virgules acceptés. Comparaison insensible à la casse et aux espaces multiples. Une ligne qui
+              correspond exactement à un id catalogue ou à un UUID Supabase fonctionne encore. Liste stockée dans
+              Supabase (<code>admin_global_package_allowlist</code>) — tous les lecteurs voient la même chose après
+              rechargement ou retour au lecteur.
+            </p>
+            <p id="gpa-status" class="status" aria-live="polite"></p>
+            <div class="field">
+              <label for="gpa-ids">Noms des bouquets (Nodecast)</label>
+              <textarea
+                id="gpa-ids"
+                rows="8"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="ex. FRANCE | SPORT 4K&#10;|EU| CINEMA"
+              ></textarea>
+            </div>
+            <div class="actions">
+              <button type="button" id="gpa-save" class="primary">Enregistrer la liste</button>
+            </div>
+            <h3 style="margin-top: 1.5rem; margin-bottom: 0.35rem; font-size: 1rem">Popup avant ouverture</h3>
+            <p class="countries-admin-intro" style="margin-top: 0">
+              Pour chaque bouquet de la liste ci-dessus (hors pays d’origine), un dialogue s’affiche au clic. Texte et
+              libellés des boutons sont enregistrés dans Supabase (<code>admin_global_package_open_confirm</code>).
+            </p>
+            <p id="gpa-confirm-status" class="status" aria-live="polite"></p>
+            <div class="field">
+              <label for="gpa-confirm-body">Message</label>
+              <textarea
+                id="gpa-confirm-body"
+                rows="4"
+                spellcheck="true"
+                autocomplete="off"
+                placeholder="Ex. Ce bouquet peut être soumis à des restrictions selon votre région…"
+              ></textarea>
+            </div>
+            <div class="field row">
+              <div>
+                <label for="gpa-confirm-yes-label">Libellé du bouton confirmation</label>
+                <input id="gpa-confirm-yes-label" type="text" placeholder="Oui" autocomplete="off" />
+              </div>
+              <div>
+                <label for="gpa-confirm-no-label">Libellé du bouton annulation</label>
+                <input id="gpa-confirm-no-label" type="text" placeholder="Non" autocomplete="off" />
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="gpa-confirm-save" class="primary">Enregistrer le popup</button>
+            </div>
+          </section>
+
+          <section class="panel countries-admin-form" style="margin-top: 1.75rem">
             <h2>Préfixes — noms de chaîne</h2>
             <p class="countries-admin-intro" style="margin-top: 0">
               Texte retiré au <strong>début</strong> du nom pour l’affichage et les règles d’affectation (ex.
@@ -764,6 +819,21 @@
         >Local</span>
       <span id="trial-timer-count" class="trial-timer-root__count">1:00</span>
     </div>
+
+    <dialog id="vel-global-pkg-confirm-dialog" class="vel-global-pkg-confirm-dialog" aria-modal="true">
+      <div class="vel-global-pkg-confirm-dialog__panel">
+        <h2 class="vel-global-pkg-confirm-dialog__title">Confirmation</h2>
+        <p id="vel-global-pkg-confirm-msg" class="vel-global-pkg-confirm-dialog__text"></p>
+        <div class="vel-global-pkg-confirm-dialog__actions">
+          <button type="button" id="vel-global-pkg-confirm-no" class="vel-global-pkg-confirm-dialog__btn">
+            Non
+          </button>
+          <button type="button" id="vel-global-pkg-confirm-yes" class="vel-global-pkg-confirm-dialog__btn primary">
+            Oui
+          </button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="trial-expired-dialog" class="trial-expired-dialog" aria-labelledby="trial-expired-title">
       <div class="trial-expired-dialog__panel">

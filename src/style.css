@@ -6661,3 +6661,79 @@ body.trial-locked .trial-offer-overlay {
   filter: brightness(1.06);
 }
 
+.vel-global-pkg-confirm-dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: calc(100vw - 1.5rem);
+}
+
+.vel-global-pkg-confirm-dialog::backdrop {
+  background: rgba(4, 3, 12, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.vel-global-pkg-confirm-dialog__panel {
+  width: min(26rem, 100%);
+  padding: 1.35rem 1.35rem 1.2rem;
+  border-radius: 1.1rem;
+  background: linear-gradient(165deg, rgba(28, 22, 48, 0.98), rgba(12, 16, 32, 0.99));
+  border: 1px solid rgba(167, 139, 250, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 24px 48px rgba(4, 6, 14, 0.65);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.vel-global-pkg-confirm-dialog__title {
+  margin: 0 0 0.65rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgba(248, 250, 252, 0.98);
+  text-align: center;
+}
+
+.vel-global-pkg-confirm-dialog__text {
+  margin: 0 0 1.15rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: rgba(203, 213, 225, 0.96);
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.vel-global-pkg-confirm-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+}
+
+.vel-global-pkg-confirm-dialog__btn {
+  min-width: 6.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.65rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.65);
+  color: rgba(248, 250, 252, 0.92);
+  font-size: 0.9rem;
+}
+
+.vel-global-pkg-confirm-dialog__btn.primary {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  border-color: transparent;
+  color: #fafafa;
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.35);
+}
+
+.vel-global-pkg-confirm-dialog__btn.primary:hover {
+  filter: brightness(1.06);
+}
+
+.vel-global-pkg-confirm-dialog__btn:hover {
+  filter: brightness(1.05);
+}
+

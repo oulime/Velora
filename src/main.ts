@@ -23,6 +23,14 @@ import { normalizeCountryKey } from "./canonicalCountries";
 import { fetchAndApplyCanonicalCountries } from "./canonicalCountriesSupabase";
 import { fetchAndApplyChannelNamePrefixes } from "./channelNamePrefixesSupabase";
 import { fetchAndApplyChannelHideNeedles } from "./channelHideNeedlesSupabase";
+import { normalizeGlobalAllowlistNameKey } from "./globalPackageAllowlist";
+import {
+  clearGlobalPackageSupabaseCaches,
+  fetchGlobalPackageAllowlistLines,
+  fetchGlobalPackageOpenConfirmUi,
+  getGlobalPackageAllowlistLines,
+  getGlobalPackageOpenConfirmUi,
+} from "./globalPackageAllowlistSupabase";
 import { buildProviderAdminConfig } from "./providerLayout";
 import {
   type LiveCategory,
@@ -296,6 +304,12 @@ let packageCoverOverrideById: Map<string, PackageCoverOverrideEntry> = new Map()
 let packageChannelOrderByKey: Map<string, number[]> = new Map();
 /** `${country_id}::${ui_tab}` -> manual package card order (package id sequence). */
 let packageGridOrderByKey: Map<string, string[]> = new Map();
+/** Bouquets présents sur la grille uniquement grâce à la liste globale Supabase (popup avant ouverture). */
+let globalAllowlistInjectedPackageIds = new Set<string>();
+
+function isGlobalAllowlistInjectedPackageId(packageId: string): boolean {
+  return globalAllowlistInjectedPackageIds.has(packageId);
+}
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
 const PKG_CHANNEL_ORDER_LS_PREFIX = "velora_pkg_ch_order_v1";
@@ -2662,7 +2676,7 @@ function liveStreamCurrentCatalogPackageName(streamId: number): string {
       return p?.name ?? syn;
     }
   }
-  for (const pkg of packagesForSelectedCountry()) {
+  for (const pkg of mergedPackagesForGrid()) {
     if (isLikelyUuid(pkg.id)) continue;
     const natives = state.streamsByCatAll.get(pkg.id) ?? [];
     if (natives.some((r) => r.stream_id === streamId)) return pkg.name;
@@ -3992,6 +4006,13 @@ window.addEventListener("velora-settings-closed", () => {
   }
 });
 
+window.addEventListener("velora-global-packages-changed", () => {
+  if (!state) return;
+  void refreshSupabaseHierarchy().then(() => {
+    if (uiShell === "packages" && isPackagesGridTab()) renderPackagesGrid();
+  });
+});
+
 /** Bouquets fournisseur (live / VOD / séries) pour le pays sélectionné dans le header. */
 function packagesForSelectedCountry(): AdminPackage[] {
   const layout = providerLayoutForUiTab();
@@ -4037,17 +4058,23 @@ function isSelectedCountryFrance(): boolean {
   return n != null && normalizeCountryKey(n) === "france";
 }
 
-function providerCategoryIdsForCurrentCountry(): string[] {
-  return packagesForSelectedCountry()
-    .filter((p) => !isLikelyUuid(p.id))
-    .map((p) => p.id);
+/**
+ * Toutes les catégories fournisseur (non-UUID) présentes sur la grille fusionnée (pays + bouquets globaux, etc.).
+ * Sert à remplir `unionStreamsForCurrentCountry` : sans cela, un bouquet global n’a aucune chaîne (hors union).
+ */
+function providerCategoryIdsForStreamUnion(): string[] {
+  const ids = new Set<string>();
+  for (const p of mergedPackagesForGrid()) {
+    if (!isLikelyUuid(p.id)) ids.add(p.id);
+  }
+  return [...ids];
 }
 
 function unionStreamsForCurrentCountry(): LiveStream[] {
   if (!state) return [];
   return collectStreamsFromProviderCategories(
     state.streamsByCatAll,
-    providerCategoryIdsForCurrentCountry()
+    providerCategoryIdsForStreamUnion()
   );
 }
 
@@ -4153,7 +4180,7 @@ function curatedStreamsForOpenPackageFromMap(
   streamsByCat: Map<string, LiveStream[]>
 ): LiveStream[] {
   const nativeSet = new Set((streamsByCat.get(String(packageId)) ?? []).map((s) => s.stream_id));
-  const all = collectStreamsFromProviderCategories(streamsByCat, providerCategoryIdsForCurrentCountry());
+  const all = collectStreamsFromProviderCategories(streamsByCat, providerCategoryIdsForStreamUnion());
   const cur = curationMapForSelection();
   const out: LiveStream[] = [];
   for (const s of all) {
@@ -4182,11 +4209,17 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     packageCoverOverrideById = new Map();
     packageChannelOrderByKey = new Map();
     packageGridOrderByKey = new Map();
+    clearGlobalPackageSupabaseCaches();
     populateCountrySelectFromAdmin();
     return;
   }
   try {
-    const [countries, packages] = await Promise.all([fetchDbAdminCountries(sb), fetchDbAdminPackages(sb)]);
+    const [countries, packages] = await Promise.all([
+      fetchDbAdminCountries(sb),
+      fetchDbAdminPackages(sb),
+      fetchGlobalPackageAllowlistLines(sb),
+      fetchGlobalPackageOpenConfirmUi(sb),
+    ]);
     dbAdminCountries = countries;
     dbAdminPackages = packages;
     try {
@@ -4216,6 +4249,7 @@ async function refreshSupabaseHierarchy(): Promise<void> {
     packageCoverOverrideById = new Map();
     packageChannelOrderByKey = new Map();
     packageGridOrderByKey = new Map();
+    clearGlobalPackageSupabaseCaches();
   }
   populateCountrySelectFromAdmin();
 }
@@ -4269,10 +4303,54 @@ function augmentChannelAssignPackagesFromDb(base: AdminPackage[]): AdminPackage[
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
+function mergeGlobalAllowlistIntoPackages(base: AdminPackage[]): AdminPackage[] {
+  const entries = getGlobalPackageAllowlistLines();
+  if (entries.length === 0 || !selectedAdminCountryId) {
+    globalAllowlistInjectedPackageIds = new Set();
+    return base;
+  }
+  const injected = new Set<string>();
+  const byId = new Map(base.map((p) => [p.id, p]));
+  const layout = providerLayoutForUiTab();
+  const anchor = selectedAdminCountryId;
+
+  for (const entry of entries) {
+    const raw = entry.trim();
+    if (!raw) continue;
+
+    const byExactId =
+      layout.packages.find((p) => p.id === raw) ?? dbAdminPackages.find((p) => p.id === raw);
+    if (byExactId) {
+      if (!byId.has(byExactId.id)) {
+        byId.set(byExactId.id, { ...byExactId, country_id: anchor });
+        injected.add(byExactId.id);
+      }
+      continue;
+    }
+
+    const nk = normalizeGlobalAllowlistNameKey(raw);
+    if (!nk) continue;
+    for (const p of layout.packages) {
+      if (normalizeGlobalAllowlistNameKey(p.name) === nk && !byId.has(p.id)) {
+        byId.set(p.id, { ...p, country_id: anchor });
+        injected.add(p.id);
+      }
+    }
+    for (const p of dbAdminPackages) {
+      if (normalizeGlobalAllowlistNameKey(p.name) === nk && !byId.has(p.id)) {
+        byId.set(p.id, { ...p, country_id: anchor });
+        injected.add(p.id);
+      }
+    }
+  }
+  globalAllowlistInjectedPackageIds = injected;
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
 function mergedPackagesForGrid(): AdminPackage[] {
   const provider = packagesForSelectedCountry();
   if (uiTab === "movies" || uiTab === "series") {
-    return [...provider].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    return mergeGlobalAllowlistIntoPackages([...provider]);
   }
   const sid = resolvedDbCountryIdForAdminPackages();
   const fromDb = sid ? dbAdminPackages.filter((p) => p.country_id === sid) : [];
@@ -4286,7 +4364,7 @@ function mergedPackagesForGrid(): AdminPackage[] {
       });
     }
   }
-  return base.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  return mergeGlobalAllowlistIntoPackages(base.sort((a, b) => a.name.localeCompare(b.name, "fr")));
 }
 
 function packageGridOrderMapKey(tab: UiTab): string | null {
@@ -4834,12 +4912,12 @@ function renderPackagesGrid(): void {
           )
         )
           return;
-        openAdminPackage(pkg.id);
+        maybeConfirmThenOpenAdminPackage(pkg.id);
       });
       card.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") {
           ev.preventDefault();
-          openAdminPackage(pkg.id);
+          maybeConfirmThenOpenAdminPackage(pkg.id);
         }
       });
       elPackagesView.appendChild(card);
@@ -4951,7 +5029,7 @@ function renderPackagesGrid(): void {
     card.addEventListener("click", (ev) => {
       if ((ev.target as HTMLElement).closest(".admin-pkg-edit-sb, .admin-pkg-del-sb, .vel-package-drag-handle"))
         return;
-      openAdminPackage(pkg.id);
+      maybeConfirmThenOpenAdminPackage(pkg.id);
     });
     elPackagesView.appendChild(card);
   }
@@ -4968,6 +5046,43 @@ function renderPackagesGrid(): void {
           : "Aucune catégorie live pour ce pays dans le catalogue fournisseur. Essayez un autre pays ou « Autres ».";
     elPackagesView.appendChild(empty);
   }
+}
+
+function maybeConfirmThenOpenAdminPackage(packageId: string): void {
+  if (!isGlobalAllowlistInjectedPackageId(packageId)) {
+    openAdminPackage(packageId);
+    return;
+  }
+  const dlg = document.getElementById("vel-global-pkg-confirm-dialog") as HTMLDialogElement | null;
+  const msgEl = document.getElementById("vel-global-pkg-confirm-msg") as HTMLParagraphElement | null;
+  const yesBtn = document.getElementById("vel-global-pkg-confirm-yes") as HTMLButtonElement | null;
+  const noBtn = document.getElementById("vel-global-pkg-confirm-no") as HTMLButtonElement | null;
+  if (!dlg || !msgEl || !yesBtn || !noBtn) {
+    openAdminPackage(packageId);
+    return;
+  }
+  const ui = getGlobalPackageOpenConfirmUi();
+  msgEl.textContent = ui.message.trim().length
+    ? ui.message.trim()
+    : "Ce bouquet est proposé pour tous les pays. Souhaitez-vous l’ouvrir ?";
+  yesBtn.textContent = (ui.yes_label ?? "Oui").trim() || "Oui";
+  noBtn.textContent = (ui.no_label ?? "Non").trim() || "Non";
+
+  const ac = new AbortController();
+  const { signal } = ac;
+  const onYes = (ev: Event): void => {
+    ev.preventDefault();
+    dlg.close();
+    openAdminPackage(packageId);
+  };
+  const onNo = (ev: Event): void => {
+    ev.preventDefault();
+    dlg.close();
+  };
+  yesBtn.addEventListener("click", onYes, { signal });
+  noBtn.addEventListener("click", onNo, { signal });
+  dlg.addEventListener("close", () => ac.abort(), { once: true });
+  dlg.showModal();
 }
 
 function openAdminPackage(packageId: string, restore?: OpenAdminPackageRestore): void {

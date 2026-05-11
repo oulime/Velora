@@ -6,6 +6,15 @@ import {
   type VeloraShellBgPreset,
   VELORA_SHELL_BG_PRESETS,
 } from "./veloraShellBackground";
+import { formatGlobalAllowlistLinesForTextarea } from "./globalPackageAllowlist";
+import {
+  fetchGlobalPackageAllowlistLines,
+  fetchGlobalPackageOpenConfirmUi,
+  getGlobalPackageAllowlistLines,
+  getGlobalPackageOpenConfirmUi,
+  replaceGlobalPackageAllowlistInDb,
+  upsertGlobalPackageOpenConfirmUi,
+} from "./globalPackageAllowlistSupabase";
 const SETTINGS_PARAM = "settings";
 const SETTINGS_VALUE = "1";
 
@@ -62,6 +71,7 @@ let prefixAdminBound = false;
 let hiddenFiltersAdminBound = false;
 let shellAppearanceBound = false;
 let trialWhitelistUiBound = false;
+let globalPackageAllowlistBound = false;
 
 function bindDeniedBack(): void {
   if (deniedBackBound) return;
@@ -296,6 +306,117 @@ async function mountSettingsTable(): Promise<void> {
   await mountHiddenFiltersAdmin(supabase);
   await mountTrialWhitelistAdmin();
   mountShellAppearanceControls();
+  await mountGlobalPackageAllowlist(supabase);
+}
+
+async function mountGlobalPackageAllowlist(supabase: SupabaseClient | null): Promise<void> {
+  const elStatusEl = document.getElementById("gpa-status") as HTMLParagraphElement | null;
+  const elTaEl = document.getElementById("gpa-ids") as HTMLTextAreaElement | null;
+  const elSaveEl = document.getElementById("gpa-save") as HTMLButtonElement | null;
+  const elConfirmSt = document.getElementById("gpa-confirm-status") as HTMLParagraphElement | null;
+  const elConfirmBody = document.getElementById("gpa-confirm-body") as HTMLTextAreaElement | null;
+  const elConfirmYes = document.getElementById("gpa-confirm-yes-label") as HTMLInputElement | null;
+  const elConfirmNo = document.getElementById("gpa-confirm-no-label") as HTMLInputElement | null;
+  const elConfirmSave = document.getElementById("gpa-confirm-save") as HTMLButtonElement | null;
+  if (!elStatusEl || !elTaEl || !elSaveEl) return;
+  const st = elStatusEl;
+  const ta = elTaEl;
+  const saveBtn = elSaveEl;
+
+  function setGpaStatus(msg: string, isError = false): void {
+    st.textContent = msg;
+    st.classList.toggle("error", isError);
+  }
+
+  function setConfirmStatus(msg: string, isError = false): void {
+    if (!elConfirmSt) return;
+    elConfirmSt.textContent = msg;
+    elConfirmSt.classList.toggle("error", isError);
+  }
+
+  function fillConfirmFieldsFromCache(): void {
+    if (!elConfirmBody || !elConfirmYes || !elConfirmNo) return;
+    const u = getGlobalPackageOpenConfirmUi();
+    elConfirmBody.value = u.message;
+    elConfirmYes.value = u.yes_label;
+    elConfirmNo.value = u.no_label;
+  }
+
+  async function refreshFromDb(): Promise<void> {
+    if (!supabase) {
+      ta.value = "";
+      setGpaStatus("Variables NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY requises.", true);
+      setConfirmStatus("Supabase requis pour le popup.", true);
+      return;
+    }
+    setGpaStatus("Chargement…");
+    setConfirmStatus("Chargement…");
+    await Promise.all([
+      fetchGlobalPackageAllowlistLines(supabase),
+      fetchGlobalPackageOpenConfirmUi(supabase),
+    ]);
+    const lines = getGlobalPackageAllowlistLines();
+    ta.value = formatGlobalAllowlistLinesForTextarea(lines);
+    fillConfirmFieldsFromCache();
+    setGpaStatus(
+      lines.length
+        ? `${lines.length} entrée(s) dans Supabase — visibles pour tous les lecteurs (fusion avec le pays sélectionné).`
+        : "Aucune entrée en base — seule la liste par pays s’affiche."
+    );
+    setConfirmStatus("Texte du popup chargé depuis Supabase.");
+  }
+
+  async function save(): Promise<void> {
+    if (!supabase) {
+      setGpaStatus("Supabase indisponible.", true);
+      return;
+    }
+    saveBtn.disabled = true;
+    setGpaStatus("Enregistrement…");
+    const { error } = await replaceGlobalPackageAllowlistInDb(supabase, ta.value);
+    saveBtn.disabled = false;
+    if (error) {
+      setGpaStatus(error, true);
+      return;
+    }
+    await fetchGlobalPackageAllowlistLines(supabase);
+    const lines = getGlobalPackageAllowlistLines();
+    ta.value = formatGlobalAllowlistLinesForTextarea(lines);
+    setGpaStatus(
+      lines.length
+        ? `${lines.length} entrée(s) enregistrée(s) dans Supabase. Les autres appareils verront la liste après rechargement ou retour au lecteur.`
+        : "Liste vide — bouquets globaux désactivés pour tout le monde."
+    );
+    window.dispatchEvent(new CustomEvent("velora-global-packages-changed"));
+  }
+
+  async function saveConfirm(): Promise<void> {
+    if (!supabase || !elConfirmBody || !elConfirmYes || !elConfirmNo || !elConfirmSave) return;
+    elConfirmSave.disabled = true;
+    setConfirmStatus("Enregistrement…");
+    const { error } = await upsertGlobalPackageOpenConfirmUi(supabase, {
+      message: elConfirmBody.value,
+      yes_label: elConfirmYes.value,
+      no_label: elConfirmNo.value,
+    });
+    elConfirmSave.disabled = false;
+    if (error) {
+      setConfirmStatus(error, true);
+      return;
+    }
+    await fetchGlobalPackageOpenConfirmUi(supabase);
+    fillConfirmFieldsFromCache();
+    setConfirmStatus("Popup enregistré dans Supabase — visible pour tous les lecteurs après rechargement.");
+    window.dispatchEvent(new CustomEvent("velora-global-packages-changed"));
+  }
+
+  await refreshFromDb();
+
+  if (!globalPackageAllowlistBound) {
+    saveBtn.addEventListener("click", () => void save());
+    elConfirmSave?.addEventListener("click", () => void saveConfirm());
+    globalPackageAllowlistBound = true;
+  }
 }
 
 async function mountTrialWhitelistAdmin(): Promise<void> {
