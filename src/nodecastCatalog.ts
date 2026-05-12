@@ -195,7 +195,9 @@ export async function fetchProxiedJsonWithInit<T>(
 ): Promise<T> {
   const ac = new AbortController();
   const rawMs = init.timeoutMs ?? FETCH_TIMEOUT_MS;
-  const effectiveMs = Math.min(Math.max(rawMs, 3_000), 120_000);
+  /** Allow sub-3s timeouts when callers pass explicit `timeoutMs` (e.g. Nodecast login fallbacks). */
+  const minFloor = init.timeoutMs != null ? 500 : 3_000;
+  const effectiveMs = Math.min(Math.max(rawMs, minFloor), 120_000);
   const timer = setTimeout(() => ac.abort(), effectiveMs);
   let r: Response;
   try {
@@ -1140,6 +1142,78 @@ async function discoverXtreamSourceIdsInternal(
   return [...sourceIds];
 }
 
+export function isVeloraCatalogCacheDebugEnabled(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("velora_debug_catalog_cache") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function catalogDebugLog(message: string, detail?: Record<string, unknown>): void {
+  if (!isVeloraCatalogCacheDebugEnabled()) return;
+  if (detail) console.info("[Velora catalog]", message, detail);
+  else console.info("[Velora catalog]", message);
+}
+
+/** Nodecast / Xtream proxy often returns `{ "error": "Unknown action" }` with HTTP 200. */
+function xtreamProxyJsonLooksRejected(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const err = (payload as Record<string, unknown>).error;
+  return typeof err === "string" && Boolean(err.trim());
+}
+
+async function loadXtreamLiveCatalogForSource(
+  base: string,
+  sourceId: string,
+  nodecastAuthHeaders: Record<string, string> | undefined
+): Promise<NodecastCatalogLoadResult | null> {
+  const enc = encodeURIComponent(sourceId);
+  try {
+    const [catPayload, streamPayload] = await Promise.all([
+      fetchProxiedJsonWithInit<unknown>(`${base}/api/proxy/xtream/${enc}/live_categories`, {
+        headers: nodecastAuthHeaders,
+      }),
+      fetchProxiedJsonWithInit<unknown>(`${base}/api/proxy/xtream/${enc}/live_streams`, {
+        headers: nodecastAuthHeaders,
+      }),
+    ]);
+    if (xtreamProxyJsonLooksRejected(catPayload) || xtreamProxyJsonLooksRejected(streamPayload)) {
+      return null;
+    }
+    const mappedStreams = asArray(streamPayload)
+      .map((item, idx) => mapNodecastChannelToLiveStream(item, idx))
+      .filter((s): s is LiveStream => s != null)
+      .map((s) => ({ ...s, nodecast_source_id: sourceId }));
+    if (!mappedStreams.length) return null;
+
+    const mappedCats = asArray(catPayload)
+      .map((c) => {
+        if (!c || typeof c !== "object") return null;
+        const o = c as Record<string, unknown>;
+        const id = String(o.category_id ?? o.id ?? "").trim();
+        const name = String(o.category_name ?? o.name ?? id).trim();
+        if (!id) return null;
+        return { category_id: id, category_name: name, parent_id: 0 } as LiveCategory;
+      })
+      .filter((c): c is LiveCategory => c != null);
+    const categories = mappedCats.length ? mappedCats : categoriesFromStreams(mappedStreams);
+    const streamsByCat = groupStreamsByCategory(mappedStreams);
+    return {
+      categories,
+      streamsByCat,
+      authHeaders: nodecastAuthHeaders,
+      nodecastXtreamSourceId: sourceId,
+      vodCategories: [],
+      vodStreamsByCat: new Map(),
+      seriesCategories: [],
+      seriesStreamsByCat: new Map(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function pingNodecastSourcesStatus(
   base: string,
   nodecastAuthHeaders?: Record<string, string>
@@ -1455,11 +1529,26 @@ async function loadSeriesCatalogFromFavoritesApi(
   return null;
 }
 
+export type TryNodecastLoginOptions = {
+  /** When true, each login POST uses a 2500ms timeout; otherwise 800ms (faster failover across bases). */
+  preferred?: boolean;
+};
+
+function envConfiguredXtreamFastPath(): { sourceId: string } | null {
+  const raw = import.meta.env.VITE_NODECAST_SKIP_CHANNEL_PROBES?.trim();
+  if (raw !== "1") return null;
+  const sourceId = import.meta.env.VITE_NODECAST_XTREAM_SOURCE_ID?.trim();
+  if (!sourceId) return null;
+  return { sourceId };
+}
+
 export async function tryNodecastLoginAndLoad(
   base: string,
   username: string,
-  password: string
+  password: string,
+  options?: TryNodecastLoginOptions
 ): Promise<NodecastCatalogLoadResult> {
+  const loginTimeoutMs = options?.preferred ? 2500 : 800;
   const loginCandidates = ["/api/auth/login", "/api/login", "/auth/login"];
   let loggedIn = false;
   let nodecastAuthHeaders: Record<string, string> | undefined;
@@ -1469,6 +1558,7 @@ export async function tryNodecastLoginAndLoad(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
+        timeoutMs: loginTimeoutMs,
       });
       const token = extractTokenDeep(loginPayload);
       if (token) {
@@ -1482,6 +1572,24 @@ export async function tryNodecastLoginAndLoad(
   }
   if (!loggedIn) {
     throw new Error("Nodecast login failed. Check panel credentials.");
+  }
+
+  const xtreamFast = envConfiguredXtreamFastPath();
+  if (xtreamFast) {
+    catalogDebugLog("Xtream direct live path attempt", {
+      base,
+      sourceId: xtreamFast.sourceId,
+      skippedLegacyChannelProbesPending: true,
+    });
+    const direct = await loadXtreamLiveCatalogForSource(base, xtreamFast.sourceId, nodecastAuthHeaders);
+    if (direct) {
+      catalogDebugLog("Xtream direct live path: success", {
+        sourceId: xtreamFast.sourceId,
+        skippedLegacyChannelProbes: true,
+      });
+      return direct;
+    }
+    catalogDebugLog("Xtream direct live path: failed, falling back to legacy channel / discovery probes");
   }
 
   const channelCandidates = [
@@ -1515,49 +1623,8 @@ export async function tryNodecastLoginAndLoad(
     const sourceIds = discovered.length ? discovered : ["9"];
 
     for (const sourceId of sourceIds) {
-      try {
-        const [catPayload, streamPayload] = await Promise.all([
-          fetchProxiedJsonWithInit<unknown>(
-            `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/live_categories`,
-            { headers: nodecastAuthHeaders }
-          ),
-          fetchProxiedJsonWithInit<unknown>(
-            `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/live_streams`,
-            { headers: nodecastAuthHeaders }
-          ),
-        ]);
-        const mappedStreams = asArray(streamPayload)
-          .map((item, idx) => mapNodecastChannelToLiveStream(item, idx))
-          .filter((s): s is LiveStream => s != null)
-          .map((s) => ({ ...s, nodecast_source_id: sourceId }));
-        if (!mappedStreams.length) continue;
-
-        streams = mappedStreams;
-        const mappedCats = asArray(catPayload)
-          .map((c) => {
-            if (!c || typeof c !== "object") return null;
-            const o = c as Record<string, unknown>;
-            const id = String(o.category_id ?? o.id ?? "").trim();
-            const name = String(o.category_name ?? o.name ?? id).trim();
-            if (!id) return null;
-            return { category_id: id, category_name: name, parent_id: 0 } as LiveCategory;
-          })
-          .filter((c): c is LiveCategory => c != null);
-        const categories = mappedCats.length ? mappedCats : categoriesFromStreams(streams);
-        const streamsByCat = groupStreamsByCategory(streams);
-        return {
-          categories,
-          streamsByCat,
-          authHeaders: nodecastAuthHeaders,
-          nodecastXtreamSourceId: sourceId,
-          vodCategories: [],
-          vodStreamsByCat: new Map(),
-          seriesCategories: [],
-          seriesStreamsByCat: new Map(),
-        };
-      } catch {
-        // try next source id
-      }
+      const loaded = await loadXtreamLiveCatalogForSource(base, sourceId, nodecastAuthHeaders);
+      if (loaded) return loaded;
     }
 
     throw new Error("Connected to Nodecast but no channels endpoint returned stream URLs.");
@@ -1565,10 +1632,18 @@ export async function tryNodecastLoginAndLoad(
 
   const categories = categoriesFromStreams(streams);
   const streamsByCat = groupStreamsByCategory(streams);
-  const discovered = await discoverXtreamSourceIdsInternal(base, nodecastAuthHeaders);
-  const tryIds = discovered.length ? discovered : ["9"];
-  const fromStream = streams.map((s) => s.nodecast_source_id?.trim()).find(Boolean);
-  const nodecastXtreamSourceId = fromStream || tryIds[0];
+  let nodecastXtreamSourceId = streams.map((s) => s.nodecast_source_id?.trim()).find(Boolean);
+  if (!nodecastXtreamSourceId && xtreamFast) {
+    nodecastXtreamSourceId = xtreamFast.sourceId;
+    catalogDebugLog("Xtream source id from env (skipped /api/sources* probes)", {
+      nodecastXtreamSourceId,
+    });
+  }
+  if (!nodecastXtreamSourceId) {
+    const discovered = await discoverXtreamSourceIdsInternal(base, nodecastAuthHeaders);
+    const tryIds = discovered.length ? discovered : ["9"];
+    nodecastXtreamSourceId = tryIds[0];
+  }
   return {
     categories,
     streamsByCat,
@@ -1605,13 +1680,6 @@ function containerExtFromVodInfoPayload(payload: unknown): string | null {
   if (!blob) return null;
   const ext = String(blob.container_extension ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 8);
   return ext || null;
-}
-
-/** Nodecast / Xtream proxy often returns `{ "error": "Unknown action" }` with HTTP 200. */
-function xtreamProxyJsonLooksRejected(payload: unknown): boolean {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  const err = (payload as Record<string, unknown>).error;
-  return typeof err === "string" && Boolean(err.trim());
 }
 
 function extractVodPlaybackHrefFromInfo(payload: unknown): string | null {

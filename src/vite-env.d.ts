@@ -5,8 +5,16 @@ interface ImportMetaEnv {
   readonly VITE_PROXY_PREFIX?: string;
   /** When URL + username are set, the app skips the login form and connects on load (values are embedded in the client bundle). */
   readonly VITE_NODECAST_URL?: string;
+  /** Preferred Nodecast origin (e.g. `http://host:3000`). Tried before no-port URL fallbacks. */
+  readonly VITE_NODECAST_API_BASE?: string;
+  /** When `"1"`, append `:3000` to `VITE_NODECAST_URL` for an extra base candidate (no port only). */
+  readonly VITE_NODECAST_PREFER_PORT_3000?: string;
   readonly VITE_NODECAST_USERNAME?: string;
   readonly VITE_NODECAST_PASSWORD?: string;
+  /** Xtream source id for `/api/proxy/xtream/{id}/…` when using the fast live path. */
+  readonly VITE_NODECAST_XTREAM_SOURCE_ID?: string;
+  /** When `"1"`, after login try direct `live_categories` / `live_streams` for `VITE_NODECAST_XTREAM_SOURCE_ID` before legacy channel probes. */
+  readonly VITE_NODECAST_SKIP_CHANNEL_PROBES?: string;
   readonly NEXT_PUBLIC_SUPABASE_URL?: string;
   readonly NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?: string;
   /** When set, package cover file uploads go to this URL (Cloudflare Worker → R2). See cloudflare-workers/package-cover-r2/README.md */

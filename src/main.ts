@@ -51,6 +51,7 @@ import {
   tmdbImageUrlMatchDisplayWidth,
   normalizeServerInput,
   sameOrigin,
+  isVeloraCatalogCacheDebugEnabled,
   type NodecastTranscodeSessionMeta,
   type SeriesEpisodeListItem,
 } from "./nodecastCatalog";
@@ -410,6 +411,55 @@ let state: {
 /** Persist Nodecast catalogue + layouts for env-auth refresh (skip second login/catalog fetch). */
 const NODECAST_SNAPSHOT_STORAGE_KEY = "velora-nodecast-session-v1";
 
+/** Last Nodecast origin that completed login (session-only fast path). */
+const NODECAST_WORKING_BASE_SS_KEY = "velora_nodecast_working_base";
+
+function preferNodecastPort3000FromEnv(): boolean {
+  const v = import.meta.env.VITE_NODECAST_PREFER_PORT_3000?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** Base URLs to try for Nodecast login (order + preferred timeouts). */
+function buildNodecastLoginBaseCandidates(userEnteredBase: string): { url: string; preferred: boolean }[] {
+  const out: { url: string; preferred: boolean }[] = [];
+  const seen = new Set<string>();
+
+  function push(url: string, preferred: boolean): void {
+    const normalized = normalizeServerInput(url.trim()).replace(/\/+$/, "");
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push({ url: normalized, preferred });
+  }
+
+  try {
+    const w = sessionStorage.getItem(NODECAST_WORKING_BASE_SS_KEY)?.trim();
+    if (w) push(w, true);
+  } catch {
+    /* ignore */
+  }
+
+  const apiBase = import.meta.env.VITE_NODECAST_API_BASE?.trim();
+  if (apiBase) push(apiBase, true);
+
+  if (preferNodecastPort3000FromEnv()) {
+    const envUrl = import.meta.env.VITE_NODECAST_URL?.trim();
+    if (envUrl) {
+      try {
+        const u = new URL(normalizeServerInput(envUrl));
+        if (!u.port) {
+          push(`${u.protocol}//${u.hostname}:3000`, true);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  push(userEnteredBase, false);
+
+  return out;
+}
+
 /** Last catalogue UI (package, fiche VOD, onglet…) — restauré après F5 / rechargement. */
 const VELORA_UI_ROUTE_STORAGE_KEY = "velora-ui-route-v1";
 
@@ -532,7 +582,10 @@ function clearVeloraUiRouteStorage(): void {
   }
 }
 
-async function tryApplyVeloraUiRouteAfterSessionReady(): Promise<boolean> {
+async function tryApplyVeloraUiRouteAfterSessionReady(opts?: {
+  /** When true (env autoconnect first load), never restore Films/Series tab (live-only first paint). */
+  skipMediaTabRestore?: boolean;
+}): Promise<boolean> {
   if (!state) {
     veloraRouteDebug("skip restore: no state");
     return false;
@@ -570,8 +623,21 @@ async function tryApplyVeloraUiRouteAfterSessionReady(): Promise<boolean> {
     });
     return false;
   }
-  const tab: UiTab =
+  const tabFromRoute: UiTab =
     r.tab === "live" || r.tab === "movies" || r.tab === "series" ? r.tab : "live";
+  const tab: UiTab =
+    opts?.skipMediaTabRestore && (tabFromRoute === "movies" || tabFromRoute === "series")
+      ? "live"
+      : tabFromRoute;
+  if (
+    isVeloraCatalogCacheDebugEnabled() &&
+    opts?.skipMediaTabRestore &&
+    tab !== tabFromRoute
+  ) {
+    console.info("[Velora catalog]", "Skipped VOD/series first-load (route restore)", {
+      wasTab: tabFromRoute,
+    });
+  }
   const scrollY = Number.isFinite(r.mainScrollY) ? Math.max(0, Math.round(r.mainScrollY)) : 0;
   const listScrollY = Number.isFinite(r.catalogListScrollY)
     ? Math.max(0, Math.round(r.catalogListScrollY))
@@ -832,7 +898,7 @@ async function bootEnvAutoconnect(): Promise<void> {
     const restored = await tryRestoreVeloraNodecastSnapshot();
     if (restored) return;
   }
-  await connect();
+  await connect({ skipMediaRouteRestore: true });
 }
 
 let hls: Hls | null = null;
@@ -6230,7 +6296,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
   playUrl(m3u8, displayChannelName(s.name), undefined, hideLiveProgress);
 }
 
-async function connect(): Promise<void> {
+async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void> {
   applyNodecastEnvDefaults();
   setLoginStatus("");
   const base = normalizeServerInput(elServer.value);
@@ -6252,27 +6318,28 @@ async function connect(): Promise<void> {
   try {
     setCatalogLoadingVisible(true, "Connexion au serveur…", "live");
     const mode: "nodecast" = "nodecast";
-    const parsedBase = new URL(base);
-    const baseCandidates: string[] = [base];
-    if (!parsedBase.port) {
-      const with3000 = `${parsedBase.protocol}//${parsedBase.hostname}:3000`;
-      if (!baseCandidates.includes(with3000)) {
-        baseCandidates.push(with3000);
-      }
+    const baseCandidates = buildNodecastLoginBaseCandidates(base);
+    if (isVeloraCatalogCacheDebugEnabled()) {
+      console.info("[Velora catalog]", "Nodecast base candidate order", {
+        candidates: baseCandidates.map((c) => ({ url: c.url, preferred: c.preferred })),
+      });
     }
-    let activeBase = baseCandidates[0];
+    let activeBase = baseCandidates[0]?.url ?? base;
     let nodecast:
       | Awaited<ReturnType<typeof tryNodecastLoginAndLoad>>
       | null = null;
     let lastConnectError: unknown = null;
     for (let i = 0; i < baseCandidates.length; i += 1) {
-      const candidate = baseCandidates[i]!;
+      const { url: candidate, preferred } = baseCandidates[i]!;
       try {
         if (i > 0) {
           setLoginStatus(`Connexion à Nodecast… (${new URL(candidate).host})`);
         }
-        nodecast = await tryNodecastLoginAndLoad(candidate, username, password);
+        nodecast = await tryNodecastLoginAndLoad(candidate, username, password, { preferred });
         activeBase = candidate;
+        if (isVeloraCatalogCacheDebugEnabled()) {
+          console.info("[Velora catalog]", "Nodecast login succeeded", { selectedBase: activeBase });
+        }
         break;
       } catch (err) {
         lastConnectError = err;
@@ -6282,6 +6349,11 @@ async function connect(): Promise<void> {
       throw (lastConnectError instanceof Error
         ? lastConnectError
         : new Error(String(lastConnectError ?? "Nodecast login failed.")));
+    }
+    try {
+      sessionStorage.setItem(NODECAST_WORKING_BASE_SS_KEY, activeBase);
+    } catch {
+      /* ignore */
     }
     setCatalogLoadingVisible(true, "Préparation de l’accueil…", "live");
     const streamsByCat = nodecast.streamsByCat;
@@ -6323,7 +6395,9 @@ async function connect(): Promise<void> {
     destroyVodPlayer();
     elNowPlaying.textContent = "";
 
-    const routeOk = await tryApplyVeloraUiRouteAfterSessionReady();
+    const routeOk = await tryApplyVeloraUiRouteAfterSessionReady({
+      skipMediaTabRestore: Boolean(opts?.skipMediaRouteRestore),
+    });
     if (!routeOk) goLiveHome();
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
