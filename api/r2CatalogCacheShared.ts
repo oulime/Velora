@@ -158,44 +158,54 @@ export function schedulePutCatalogToR2(
   contentType: string | null,
   upstreamEtag: string | null | undefined,
 ): void {
-  if (body.length === 0 || body.length > MAX_CATALOG_R2_BYTES) return;
+  void putCatalogToR2(env, targetUrl, body, contentType, upstreamEtag);
+}
+
+export async function putCatalogToR2(
+  env: NodeJS.ProcessEnv,
+  targetUrl: string,
+  body: Buffer,
+  contentType: string | null,
+  upstreamEtag: string | null | undefined,
+): Promise<boolean> {
+  if (body.length === 0 || body.length > MAX_CATALOG_R2_BYTES) return false;
   const cfg = readR2CatalogConfig(env);
-  if (!cfg) return;
+  if (!cfg) return false;
   const key = catalogCacheR2ObjectKey(targetUrl);
   const expiresAt = Date.now() + catalogR2TtlMs(env);
   const ct = (contentType && contentType.trim()) || "application/json";
   const etagMeta = (upstreamEtag && upstreamEtag.trim()) || "";
-  void (async () => {
-    try {
-      const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
-      const client = new S3Client({
-        region: "auto",
-        endpoint: cfg.s3Endpoint,
-        credentials: {
-          accessKeyId: cfg.accessKeyId,
-          secretAccessKey: cfg.secretAccessKey,
+  try {
+    const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+    const client = new S3Client({
+      region: "auto",
+      endpoint: cfg.s3Endpoint,
+      credentials: {
+        accessKeyId: cfg.accessKeyId,
+        secretAccessKey: cfg.secretAccessKey,
+      },
+      forcePathStyle: true,
+      requestHandler: new NodeHttpHandler({
+        httpsAgent: r2S3HttpsAgent,
+        connectionTimeout: 15_000,
+        socketTimeout: 120_000,
+      }),
+    });
+    await client.send(
+      new PutObjectCommand({
+        Bucket: cfg.bucket,
+        Key: key,
+        Body: body,
+        ContentType: ct,
+        Metadata: {
+          [META_EXPIRES]: String(expiresAt),
+          ...(etagMeta ? { [META_ETAG]: etagMeta.slice(0, 1024) } : {}),
         },
-        forcePathStyle: true,
-        requestHandler: new NodeHttpHandler({
-          httpsAgent: r2S3HttpsAgent,
-          connectionTimeout: 15_000,
-          socketTimeout: 120_000,
-        }),
-      });
-      await client.send(
-        new PutObjectCommand({
-          Bucket: cfg.bucket,
-          Key: key,
-          Body: body,
-          ContentType: ct,
-          Metadata: {
-            [META_EXPIRES]: String(expiresAt),
-            ...(etagMeta ? { [META_ETAG]: etagMeta.slice(0, 1024) } : {}),
-          },
-        })
-      );
-    } catch (e) {
-      console.warn("[catalog-r2] put failed", key, e);
-    }
-  })();
+      })
+    );
+    return true;
+  } catch (e) {
+    console.warn("[catalog-r2] put failed", key, e);
+    return false;
+  }
 }

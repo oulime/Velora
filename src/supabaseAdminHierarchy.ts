@@ -31,6 +31,11 @@ export async function fetchDbAdminPackages(sb: SupabaseClient): Promise<AdminPac
 export const PACKAGE_COVERS_BUCKET = "package-covers";
 
 const MAX_COVER_BYTES = 2 * 1024 * 1024;
+const TARGET_COVER_BYTES = 420 * 1024;
+const COVER_MAX_DIMENSION = 960;
+const COVER_MIN_DIMENSION = 420;
+const COVER_WEBP_QUALITY_START = 0.82;
+const COVER_WEBP_QUALITY_MIN = 0.62;
 
 /** Safe folder name under Storage (provider ids, `velagg:…`, UUIDs). */
 export function sanitizePackageCoverStoragePrefix(packageId: string): string {
@@ -53,6 +58,101 @@ function coverLog(msg: string, extra?: Record<string, unknown>): void {
   if (!isPackageCoverDebugEnabled()) return;
   if (extra) console.log("[package-cover]", msg, extra);
   else console.log("[package-cover]", msg);
+}
+
+function packageCoverFileStem(name: string): string {
+  const raw = (name || "cover").replace(/\.[^.]+$/, "").trim() || "cover";
+  return raw.normalize("NFKD").replace(/[^\w.-]+/g, "-").replace(/-+/g, "-").slice(0, 80) || "cover";
+}
+
+async function decodeCoverImage(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if ("createImageBitmap" in window) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch {
+      /* fall back to <img> decode */
+    }
+  }
+
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    await img.decode();
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function optimizePackageCoverForUpload(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.type === "image/svg+xml") return file;
+
+  let decoded: ImageBitmap | HTMLImageElement;
+  try {
+    decoded = await decodeCoverImage(file);
+  } catch {
+    coverLog("cover optimize skipped (decode failed)", { name: file.name, type: file.type, bytes: file.size });
+    return file;
+  }
+
+  const sourceWidth = decoded.width;
+  const sourceHeight = decoded.height;
+  if (!sourceWidth || !sourceHeight) return file;
+
+  const stem = packageCoverFileStem(file.name);
+  let maxDim = Math.min(COVER_MAX_DIMENSION, Math.max(sourceWidth, sourceHeight));
+  let quality = COVER_WEBP_QUALITY_START;
+  let best: Blob | null = null;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!ctx) return file;
+
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const scale = Math.min(1, maxDim / Math.max(sourceWidth, sourceHeight));
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(decoded, 0, 0, canvas.width, canvas.height);
+
+    const blob = await canvasBlob(canvas, "image/webp", quality);
+    if (blob) {
+      best = blob;
+      if (blob.size <= TARGET_COVER_BYTES || (blob.size <= MAX_COVER_BYTES && maxDim <= COVER_MIN_DIMENSION)) {
+        break;
+      }
+    }
+
+    if (quality > COVER_WEBP_QUALITY_MIN) {
+      quality = Math.max(COVER_WEBP_QUALITY_MIN, quality - 0.06);
+    } else {
+      maxDim = Math.max(COVER_MIN_DIMENSION, Math.round(maxDim * 0.82));
+      quality = COVER_WEBP_QUALITY_START;
+    }
+  }
+
+  if ("close" in decoded && typeof decoded.close === "function") decoded.close();
+  if (!best || best.size > MAX_COVER_BYTES) return file;
+  if (best.size >= file.size && file.size <= MAX_COVER_BYTES) return file;
+
+  const optimized = new File([best], `${stem}.webp`, {
+    type: "image/webp",
+    lastModified: Date.now(),
+  });
+  coverLog("cover optimized before upload", {
+    originalBytes: file.size,
+    optimizedBytes: optimized.size,
+    originalType: file.type,
+    optimizedType: optimized.type,
+    width: canvas.width,
+    height: canvas.height,
+  });
+  return optimized;
 }
 
 async function uploadPackageCoverToCloudflare(
@@ -144,24 +244,25 @@ export async function uploadPackageCoverFile(
   file: File
 ): Promise<{ url: string } | { error: string }> {
   coverLog("uploadPackageCoverFile start", { packageId, fileBytes: file.size, name: file.name });
-  if (file.size > MAX_COVER_BYTES) {
+  const uploadFile = await optimizePackageCoverForUpload(file);
+  if (uploadFile.size > MAX_COVER_BYTES) {
     return { error: "Image trop volumineuse (max 2 Mo)." };
   }
-  const cf = await uploadPackageCoverToCloudflare(packageId, file);
+  const cf = await uploadPackageCoverToCloudflare(packageId, uploadFile);
   if (cf) return cf;
 
-  const r2 = await uploadPackageCoverToR2LocalApi(packageId, file);
+  const r2 = await uploadPackageCoverToR2LocalApi(packageId, uploadFile);
   if (r2) return r2;
 
   coverLog("try Supabase Storage", { bucket: PACKAGE_COVERS_BUCKET, packageId });
-  const rawExt = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const rawExt = (uploadFile.name.split(".").pop() || "jpg").toLowerCase();
   const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "jpg";
   const folder = sanitizePackageCoverStoragePrefix(packageId);
   const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
-  const { error } = await sb.storage.from(PACKAGE_COVERS_BUCKET).upload(path, file, {
-    cacheControl: "3600",
+  const { error } = await sb.storage.from(PACKAGE_COVERS_BUCKET).upload(path, uploadFile, {
+    cacheControl: "31536000",
     upsert: false,
-    contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`,
+    contentType: uploadFile.type || `image/${ext === "jpg" ? "jpeg" : ext}`,
   });
   if (error) {
     coverLog("Supabase Storage upload failed", { message: error.message });

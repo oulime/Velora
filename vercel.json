@@ -4,9 +4,15 @@
   "rewrites": [
     { "source": "/proxy", "destination": "/api/proxy" }
   ],
+  "crons": [
+    { "path": "/api/admin/warm-catalog-cache", "schedule": "0 4 * * *" }
+  ],
   "functions": {
     "api/proxy.ts": {
       "maxDuration": 60
+    },
+    "api/admin/warm-catalog-cache.ts": {
+      "maxDuration": 300
     },
     "api/r2-package-cover.ts": {
       "maxDuration": 30

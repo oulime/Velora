@@ -152,6 +152,7 @@ async function putObjectToR2(
         Key: key,
         Body: body,
         ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable",
       })
     );
     return { ok: true };

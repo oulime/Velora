@@ -284,6 +284,10 @@ function isMediaBinaryPath(pathname: string): boolean {
     /\/segment\//i.test(pathname);
 }
 
+function isImageBinaryPath(pathname: string): boolean {
+  return /\.(avif|gif|heic|jpeg|jpg|png|svg|webp)$/i.test(pathname);
+}
+
 function applyMediaCachingHeaders(
   res: VercelResponse,
   upstream: Response,
@@ -291,7 +295,8 @@ function applyMediaCachingHeaders(
 ): void {
   const pathname = new URL(targetUrl).pathname;
   if (isPlaylistPath(pathname)) return;
-  if (!isMediaBinaryPath(pathname)) return;
+  const contentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!isMediaBinaryPath(pathname) && !isImageBinaryPath(pathname) && !contentType.startsWith("image/")) return;
   const cacheControl = upstream.headers.get("cache-control");
   if (!cacheControl?.trim()) {
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");

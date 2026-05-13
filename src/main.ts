@@ -51,7 +51,6 @@ import {
   pingNodecastSourcesStatus,
   proxiedUrl,
   imageUrlForDisplay,
-  tmdbImageUrlMatchDisplayWidth,
   normalizeServerInput,
   sameOrigin,
   isVeloraCatalogCacheDebugEnabled,
@@ -3049,6 +3048,7 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
   prependVelListingCategoryHeader(tab === "movies" ? "movies" : "series");
   const emptyEmoji = tab === "movies" ? "🎬" : "📺";
   const adminTools = showAdminChannelCurateTools() && uiAdminPackageId != null;
+  let priorityImageSlots = 8;
   for (const s of streams) {
     const card = document.createElement("button");
     card.type = "button";
@@ -3067,9 +3067,10 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
     if (iconHref) {
       const img = document.createElement("img");
       img.alt = "";
-      img.loading = "lazy";
-      img.decoding = "async";
-      img.src = proxiedUrl(iconHref);
+      const priority = priorityImageSlots > 0;
+      if (priority) priorityImageSlots--;
+      wireImageLoadingState(img, priority);
+      img.src = posterImageSrc(iconHref);
       img.addEventListener("error", () => {
         poster.innerHTML = "";
         poster.classList.add("vel-vod-movie-card__poster--empty");
@@ -3172,7 +3173,7 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
 /** Backdrop / poster URL for VOD hero: TMDB profile matched to content width × DPR, then proxy rules. */
 function vodHeroBackgroundDisplayUrl(rawHttps: string): string {
   const w = Math.max(240, elContentView.clientWidth || (typeof window !== "undefined" ? window.innerWidth : 800));
-  return imageUrlForDisplay(tmdbImageUrlMatchDisplayWidth(rawHttps, w));
+  return imageUrlForDisplay(rawHttps, w);
 }
 
 const vodFilmDetailHeroBgResizeObservers = new WeakMap<HTMLDivElement, ResizeObserver>();
@@ -3645,6 +3646,7 @@ function renderPackageChannelList(): void {
 
   prependVelListingCategoryHeader("live");
 
+  let priorityImageSlots = 8;
   for (const s of filtered) {
     const row = document.createElement("div");
     row.className = "vel-media-item-row";
@@ -3678,9 +3680,10 @@ function renderPackageChannelList(): void {
     if (iconHref) {
       const img = document.createElement("img");
       img.alt = "";
-      img.decoding = "async";
-      img.loading = "lazy";
-      img.src = proxiedUrl(iconHref);
+      const priority = priorityImageSlots > 0;
+      if (priority) priorityImageSlots--;
+      wireImageLoadingState(img, priority);
+      img.src = thumbImageSrc(iconHref);
       img.addEventListener("error", () => {
         thumb.innerHTML = "";
         thumb.classList.add("media-item__thumb--empty");
@@ -5021,7 +5024,32 @@ async function persistPackageThemeColumns(
 
 /** See `imageUrlForDisplay` (R2 `*.r2.dev` = direct; other HTTPS = `/proxy`). */
 function packageCoverImageSrc(href: string): string {
-  return imageUrlForDisplay(href);
+  return imageUrlForDisplay(href, 420);
+}
+
+function gridImageSrc(href: string): string {
+  return imageUrlForDisplay(href, 420);
+}
+
+function posterImageSrc(href: string): string {
+  return imageUrlForDisplay(href, 260);
+}
+
+function thumbImageSrc(href: string): string {
+  return imageUrlForDisplay(href, 96);
+}
+
+function wireImageLoadingState(img: HTMLImageElement, priority = false): void {
+  img.classList.add("vel-image-loading");
+  img.loading = priority ? "eager" : "lazy";
+  img.decoding = "async";
+  img.setAttribute("fetchpriority", priority ? "high" : "auto");
+  const done = (): void => {
+    img.classList.remove("vel-image-loading");
+  };
+  img.addEventListener("load", done, { once: true });
+  img.addEventListener("error", done, { once: true });
+  if (img.complete) queueMicrotask(done);
 }
 
 function appendAddPackageCard(): void {
@@ -5050,10 +5078,9 @@ function isNearlySquarePackageArt(nw: number, nh: number): boolean {
   return r >= 1 - PACKAGE_CARD_SQUARE_RATIO_EPS && r <= 1 + PACKAGE_CARD_SQUARE_RATIO_EPS;
 }
 
-function wirePackageCardArtFit(img: HTMLImageElement): void {
+function wirePackageCardArtFit(img: HTMLImageElement, priority = false): void {
   img.classList.add("vel-package-card__art");
-  img.loading = "lazy";
-  img.decoding = "async";
+  wireImageLoadingState(img, priority);
   const apply = (): void => {
     img.classList.remove("vel-package-card__art--cover", "vel-package-card__art--contain");
     img.classList.add(
@@ -5206,6 +5233,12 @@ function renderPackagesGrid(): void {
     if (isSoftDeletedNonDbPackage(pkg.id)) return false;
     return streamsDisplayedForGridPackage(pkg.id).length > 0;
   });
+  let priorityImageSlots = 8;
+  const wireGridPackageImage = (img: HTMLImageElement): void => {
+    const priority = priorityImageSlots > 0;
+    if (priority) priorityImageSlots--;
+    wirePackageCardArtFit(img, priority);
+  };
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
     const isSoftDeleted = isSoftDeletedNonDbPackage(pkg.id);
@@ -5267,7 +5300,7 @@ function renderPackagesGrid(): void {
         img.alt = "";
         img.setAttribute("role", "presentation");
         img.src = packageCoverImageSrc(cover);
-        wirePackageCardArtFit(img);
+        wireGridPackageImage(img);
         img.addEventListener("error", () => {
           if (isPackageCoverDebugEnabled()) {
             console.warn("[package-cover] grid img error (db package)", {
@@ -5281,8 +5314,8 @@ function renderPackagesGrid(): void {
             const img2 = document.createElement("img");
             img2.alt = "";
             img2.setAttribute("role", "presentation");
-            img2.src = proxiedUrl(channelFirstIcon);
-            wirePackageCardArtFit(img2);
+            img2.src = gridImageSrc(channelFirstIcon);
+            wireGridPackageImage(img2);
             img2.addEventListener("error", () => {
               img2.remove();
               const em = document.createElement("span");
@@ -5305,8 +5338,8 @@ function renderPackagesGrid(): void {
         const img = document.createElement("img");
         img.alt = "";
         img.setAttribute("role", "presentation");
-        img.src = proxiedUrl(channelFirstIcon);
-        wirePackageCardArtFit(img);
+        img.src = gridImageSrc(channelFirstIcon);
+        wireGridPackageImage(img);
         img.addEventListener("error", () => {
           img.remove();
           const em = document.createElement("span");
@@ -5411,8 +5444,8 @@ function renderPackagesGrid(): void {
       const img = document.createElement("img");
       img.alt = "";
       img.setAttribute("role", "presentation");
-      img.src = proxiedUrl(href);
-      wirePackageCardArtFit(img);
+      img.src = gridImageSrc(href);
+      wireGridPackageImage(img);
       img.addEventListener("error", () => {
         img.remove();
         appendEmoji(onFailEmoji);
@@ -5425,7 +5458,7 @@ function renderPackagesGrid(): void {
       img.alt = "";
       img.setAttribute("role", "presentation");
       img.src = packageCoverImageSrc(httpsOverride);
-      wirePackageCardArtFit(img);
+      wireGridPackageImage(img);
       img.addEventListener("error", () => {
         if (isPackageCoverDebugEnabled()) {
           console.warn("[package-cover] grid img error (catalog override)", {
