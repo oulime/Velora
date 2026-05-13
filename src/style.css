@@ -1836,7 +1836,8 @@ a.topbar__admin-link {
     animation: none !important;
   }
 
-  .vel-image-loading {
+  .vel-image-loading-host::after,
+  .vel-image-loaded {
     animation: none !important;
   }
 
@@ -2585,6 +2586,7 @@ a.topbar__admin-link {
   position: absolute;
   inset: 0;
   background: linear-gradient(180deg, #282234 0%, #0f0d16 100%);
+  overflow: hidden;
 }
 
 .vel-vod-movie-card__poster img {
@@ -3640,25 +3642,58 @@ body.vel-vod-fullscreen-active .main--velora {
   pointer-events: none;
 }
 
-.vel-image-loading {
+.media-item__thumb {
+  position: relative;
+  overflow: hidden;
+}
+
+.vel-image-loading-host::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
   background:
     linear-gradient(
       110deg,
-      rgba(255, 255, 255, 0.06) 0%,
-      rgba(255, 255, 255, 0.16) 22%,
-      rgba(255, 255, 255, 0.06) 44%
+      rgba(255, 255, 255, 0.045) 0%,
+      rgba(255, 255, 255, 0.13) 24%,
+      rgba(255, 255, 255, 0.045) 48%
     ),
-    color-mix(in srgb, var(--vel-primary, #8a2be2) 8%, rgba(255, 255, 255, 0.05));
-  background-size: 220% 100%, 100% 100%;
-  animation: vel-image-loading-shimmer 1.15s ease-in-out infinite;
+    radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.08), transparent 44%),
+    color-mix(in srgb, var(--vel-primary, #8a2be2) 10%, rgba(255, 255, 255, 0.05));
+  background-size: 240% 100%, 100% 100%, 100% 100%;
+  animation: vel-image-loading-shimmer 1.25s ease-in-out infinite;
+}
+
+.vel-image-loading {
+  opacity: 0;
+}
+
+.vel-image-loaded {
+  opacity: 1;
+  animation: vel-image-loaded-reveal 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes vel-image-loading-shimmer {
   0% {
-    background-position: 120% 0, 0 0;
+    background-position: 120% 0, 0 0, 0 0;
   }
   100% {
-    background-position: -120% 0, 0 0;
+    background-position: -120% 0, 0 0, 0 0;
+  }
+}
+
+@keyframes vel-image-loaded-reveal {
+  0% {
+    opacity: 0;
+    filter: saturate(0.85) brightness(1.08);
+    transform: scale(1.015);
+  }
+  100% {
+    opacity: 1;
+    filter: saturate(1) brightness(1);
+    transform: scale(1);
   }
 }
 

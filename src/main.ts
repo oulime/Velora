@@ -3069,7 +3069,7 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
       img.alt = "";
       const priority = priorityImageSlots > 0;
       if (priority) priorityImageSlots--;
-      wireImageLoadingState(img, priority);
+      wireImageLoadingState(img, priority, poster);
       img.src = posterImageSrc(iconHref);
       img.addEventListener("error", () => {
         poster.innerHTML = "";
@@ -3682,7 +3682,7 @@ function renderPackageChannelList(): void {
       img.alt = "";
       const priority = priorityImageSlots > 0;
       if (priority) priorityImageSlots--;
-      wireImageLoadingState(img, priority);
+      wireImageLoadingState(img, priority, thumb);
       img.src = thumbImageSrc(iconHref);
       img.addEventListener("error", () => {
         thumb.innerHTML = "";
@@ -5039,13 +5039,17 @@ function thumbImageSrc(href: string): string {
   return imageUrlForDisplay(href, 96);
 }
 
-function wireImageLoadingState(img: HTMLImageElement, priority = false): void {
+function wireImageLoadingState(img: HTMLImageElement, priority = false, host?: HTMLElement): void {
   img.classList.add("vel-image-loading");
+  host?.classList.add("vel-image-loading-host");
   img.loading = priority ? "eager" : "lazy";
   img.decoding = "async";
   img.setAttribute("fetchpriority", priority ? "high" : "auto");
   const done = (): void => {
     img.classList.remove("vel-image-loading");
+    img.classList.add("vel-image-loaded");
+    host?.classList.remove("vel-image-loading-host");
+    host?.classList.add("vel-image-loaded-host");
   };
   img.addEventListener("load", done, { once: true });
   img.addEventListener("error", done, { once: true });
@@ -5078,9 +5082,9 @@ function isNearlySquarePackageArt(nw: number, nh: number): boolean {
   return r >= 1 - PACKAGE_CARD_SQUARE_RATIO_EPS && r <= 1 + PACKAGE_CARD_SQUARE_RATIO_EPS;
 }
 
-function wirePackageCardArtFit(img: HTMLImageElement, priority = false): void {
+function wirePackageCardArtFit(img: HTMLImageElement, priority = false, host?: HTMLElement): void {
   img.classList.add("vel-package-card__art");
-  wireImageLoadingState(img, priority);
+  wireImageLoadingState(img, priority, host);
   const apply = (): void => {
     img.classList.remove("vel-package-card__art--cover", "vel-package-card__art--contain");
     img.classList.add(
@@ -5234,10 +5238,10 @@ function renderPackagesGrid(): void {
     return streamsDisplayedForGridPackage(pkg.id).length > 0;
   });
   let priorityImageSlots = 8;
-  const wireGridPackageImage = (img: HTMLImageElement): void => {
+  const wireGridPackageImage = (img: HTMLImageElement, host: HTMLElement): void => {
     const priority = priorityImageSlots > 0;
     if (priority) priorityImageSlots--;
-    wirePackageCardArtFit(img, priority);
+    wirePackageCardArtFit(img, priority, host);
   };
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
@@ -5300,7 +5304,7 @@ function renderPackagesGrid(): void {
         img.alt = "";
         img.setAttribute("role", "presentation");
         img.src = packageCoverImageSrc(cover);
-        wireGridPackageImage(img);
+        wireGridPackageImage(img, card);
         img.addEventListener("error", () => {
           if (isPackageCoverDebugEnabled()) {
             console.warn("[package-cover] grid img error (db package)", {
@@ -5315,7 +5319,7 @@ function renderPackagesGrid(): void {
             img2.alt = "";
             img2.setAttribute("role", "presentation");
             img2.src = gridImageSrc(channelFirstIcon);
-            wireGridPackageImage(img2);
+            wireGridPackageImage(img2, card);
             img2.addEventListener("error", () => {
               img2.remove();
               const em = document.createElement("span");
@@ -5339,7 +5343,7 @@ function renderPackagesGrid(): void {
         img.alt = "";
         img.setAttribute("role", "presentation");
         img.src = gridImageSrc(channelFirstIcon);
-        wireGridPackageImage(img);
+        wireGridPackageImage(img, card);
         img.addEventListener("error", () => {
           img.remove();
           const em = document.createElement("span");
@@ -5445,7 +5449,7 @@ function renderPackagesGrid(): void {
       img.alt = "";
       img.setAttribute("role", "presentation");
       img.src = gridImageSrc(href);
-      wireGridPackageImage(img);
+      wireGridPackageImage(img, card);
       img.addEventListener("error", () => {
         img.remove();
         appendEmoji(onFailEmoji);
@@ -5458,7 +5462,7 @@ function renderPackagesGrid(): void {
       img.alt = "";
       img.setAttribute("role", "presentation");
       img.src = packageCoverImageSrc(httpsOverride);
-      wireGridPackageImage(img);
+      wireGridPackageImage(img, card);
       img.addEventListener("error", () => {
         if (isPackageCoverDebugEnabled()) {
           console.warn("[package-cover] grid img error (catalog override)", {
