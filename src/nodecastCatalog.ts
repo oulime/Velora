@@ -1054,14 +1054,18 @@ export function extractCategoryIdsFromRaw(
   return dedupeCategoryIds(withDefault);
 }
 
-export function mapNodecastChannelToLiveStream(raw: unknown, index: number): LiveStream | null {
+export function mapNodecastChannelToLiveStream(
+  raw: unknown,
+  index: number,
+  defaultCategoryId?: string
+): LiveStream | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
   const name = String(c.name ?? c.title ?? `Channel ${index + 1}`).trim();
   const directSource = extractStreamUrlDeep(c) ?? "";
   if (!name) return null;
 
-  const categoryIds = extractCategoryIdsFromRaw(c);
+  const categoryIds = extractCategoryIdsFromRaw(c, defaultCategoryId);
   const categoryId = categoryIds[0] ?? "uncategorized";
   const numericId = Number(c.stream_id ?? c.id ?? index + 1);
   const iconRaw =
@@ -1302,6 +1306,29 @@ async function loadXtreamLiveCatalogForSource(
   }
 }
 
+async function loadXtreamLiveCategoryShellForSource(
+  base: string,
+  sourceId: string,
+  nodecastAuthHeaders: Record<string, string> | undefined
+): Promise<NodecastCatalogLoadResult | null> {
+  try {
+    const categories = await fetchNodecastLiveCategories(base, sourceId, nodecastAuthHeaders);
+    if (!categories.length) return null;
+    return {
+      categories,
+      streamsByCat: new Map(),
+      authHeaders: nodecastAuthHeaders,
+      nodecastXtreamSourceId: sourceId,
+      vodCategories: [],
+      vodStreamsByCat: new Map(),
+      seriesCategories: [],
+      seriesStreamsByCat: new Map(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function pingNodecastSourcesStatus(
   base: string,
   nodecastAuthHeaders?: Record<string, string>
@@ -1400,6 +1427,203 @@ export async function fetchNodecastSeriesCatalog(
   headers?: Record<string, string>
 ): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> }> {
   return loadXtreamSeriesCatalog(base, sourceId, headers);
+}
+
+export async function fetchNodecastVodCategories(
+  base: string,
+  sourceId: string,
+  headers?: Record<string, string>
+): Promise<LiveCategory[]> {
+  const payload = await fetchProxiedJsonWithInit<unknown>(
+    `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/vod_categories`,
+    { headers }
+  );
+  if (xtreamProxyJsonLooksRejected(payload)) {
+    throw new Error("Xtream proxy rejected VOD categories response");
+  }
+  return asArray(payload)
+    .map(mapXtreamCategoryRow)
+    .filter((c): c is LiveCategory => c != null);
+}
+
+export async function fetchNodecastLiveCategories(
+  base: string,
+  sourceId: string,
+  headers?: Record<string, string>
+): Promise<LiveCategory[]> {
+  const payload = await fetchProxiedJsonWithInit<unknown>(
+    `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/live_categories`,
+    { headers }
+  );
+  if (xtreamProxyJsonLooksRejected(payload)) {
+    throw new Error("Xtream proxy rejected live categories response");
+  }
+  return asArray(payload)
+    .map(mapXtreamCategoryRow)
+    .filter((c): c is LiveCategory => c != null);
+}
+
+export async function fetchNodecastSeriesCategories(
+  base: string,
+  sourceId: string,
+  headers?: Record<string, string>
+): Promise<LiveCategory[]> {
+  const payload = await fetchProxiedJsonWithInit<unknown>(
+    `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/series_categories`,
+    { headers }
+  );
+  if (xtreamProxyJsonLooksRejected(payload)) {
+    throw new Error("Xtream proxy rejected series categories response");
+  }
+  return asArray(payload)
+    .map(mapXtreamCategoryRow)
+    .filter((c): c is LiveCategory => c != null);
+}
+
+function xtreamVodUrlsForCategory(root: string, categoryId: string): string[] {
+  const enc = encodeURIComponent(categoryId);
+  return [
+    `${root}/vod_streams?category_id=${enc}`,
+    `${root}/vod_streams?cat_id=${enc}`,
+    `${root}/vod_streams/${enc}`,
+    `${root}/player_api?action=get_vod_streams&category_id=${enc}`,
+    `${root}/player_api.php?action=get_vod_streams&category_id=${enc}`,
+  ];
+}
+
+function xtreamLiveUrlsForCategory(root: string, categoryId: string): string[] {
+  const enc = encodeURIComponent(categoryId);
+  return [
+    `${root}/live_streams?category_id=${enc}`,
+    `${root}/live_streams?cat_id=${enc}`,
+    `${root}/live_streams/${enc}`,
+    `${root}/player_api?action=get_live_streams&category_id=${enc}`,
+    `${root}/player_api.php?action=get_live_streams&category_id=${enc}`,
+  ];
+}
+
+function xtreamSeriesUrlsForCategory(root: string, categoryId: string): string[] {
+  const enc = encodeURIComponent(categoryId);
+  return [
+    `${root}/series?category_id=${enc}`,
+    `${root}/series?cat_id=${enc}`,
+    `${root}/series/${enc}`,
+    `${root}/get_series?category_id=${enc}`,
+    `${root}/get_series?cat_id=${enc}`,
+    `${root}/get_series?category=${enc}`,
+    `${root}/get_series/${enc}`,
+    `${root}/player_api?action=get_series&category_id=${enc}`,
+    `${root}/player_api.php?action=get_series&category_id=${enc}`,
+  ];
+}
+
+export async function fetchNodecastVodStreamsForCategories(
+  base: string,
+  sourceId: string,
+  categoryIds: readonly string[],
+  headers?: Record<string, string>
+): Promise<Map<string, LiveStream[]>> {
+  const sid = encodeURIComponent(sourceId);
+  const root = `${base}/api/proxy/xtream/${sid}`;
+  const out: LiveStream[] = [];
+  const seen = new Set<string>();
+  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
+    if (seen.has(categoryId)) continue;
+    seen.add(categoryId);
+    for (const url of xtreamVodUrlsForCategory(root, categoryId)) {
+      try {
+        const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
+        if (xtreamProxyJsonLooksRejected(payload)) continue;
+        const rawRows = asArray(payload);
+        const chunk = rawRows
+          .map((item, idx) => mapNodecastChannelToLiveStream(item, idx, categoryId))
+          .filter((s): s is LiveStream => s != null)
+          .map((s) => ({
+            ...s,
+            nodecast_source_id: sourceId,
+            nodecast_media: "vod" as const,
+          }));
+        if (chunk.length) {
+          out.push(...chunk);
+          break;
+        }
+      } catch {
+        /* variante suivante */
+      }
+    }
+  }
+  return groupStreamsByCategory(out);
+}
+
+export async function fetchNodecastLiveStreamsForCategories(
+  base: string,
+  sourceId: string,
+  categoryIds: readonly string[],
+  headers?: Record<string, string>
+): Promise<Map<string, LiveStream[]>> {
+  const sid = encodeURIComponent(sourceId);
+  const root = `${base}/api/proxy/xtream/${sid}`;
+  const out: LiveStream[] = [];
+  const seen = new Set<string>();
+  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
+    if (seen.has(categoryId)) continue;
+    seen.add(categoryId);
+    for (const url of xtreamLiveUrlsForCategory(root, categoryId)) {
+      try {
+        const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
+        if (xtreamProxyJsonLooksRejected(payload)) continue;
+        const rawRows = asArray(payload);
+        const chunk = rawRows
+          .map((item, idx) => mapNodecastChannelToLiveStream(item, idx, categoryId))
+          .filter((s): s is LiveStream => s != null)
+          .map((s) => ({
+            ...s,
+            nodecast_source_id: sourceId,
+            nodecast_media: "live" as const,
+          }));
+        if (chunk.length) {
+          out.push(...chunk);
+          break;
+        }
+      } catch {
+        /* variante suivante */
+      }
+    }
+  }
+  return groupStreamsByCategory(out);
+}
+
+export async function fetchNodecastSeriesStreamsForCategories(
+  base: string,
+  sourceId: string,
+  categoryIds: readonly string[],
+  headers?: Record<string, string>
+): Promise<Map<string, LiveStream[]>> {
+  const sid = encodeURIComponent(sourceId);
+  const root = `${base}/api/proxy/xtream/${sid}`;
+  const out: LiveStream[] = [];
+  const seen = new Set<string>();
+  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
+    if (seen.has(categoryId)) continue;
+    seen.add(categoryId);
+    for (const url of xtreamSeriesUrlsForCategory(root, categoryId)) {
+      try {
+        const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
+        if (xtreamProxyJsonLooksRejected(payload)) continue;
+        const rawRows = seriesListFromPayload(payload);
+        const chunk = rawRows
+          .map((item, idx) => mapNodecastSeriesToStream(item, idx, sourceId, categoryId))
+          .filter((s): s is LiveStream => s != null);
+        if (chunk.length) {
+          out.push(...chunk);
+          break;
+        }
+      } catch {
+        /* variante suivante */
+      }
+    }
+  }
+  return groupStreamsByCategory(out);
 }
 
 async function loadXtreamVodCatalog(
@@ -1711,15 +1935,15 @@ export async function tryNodecastLoginAndLoad(
       sourceId: xtreamFast.sourceId,
       skippedLegacyChannelProbesPending: true,
     });
-    const direct = await loadXtreamLiveCatalogForSource(base, xtreamFast.sourceId, nodecastAuthHeaders);
+    const direct = await loadXtreamLiveCategoryShellForSource(base, xtreamFast.sourceId, nodecastAuthHeaders);
     if (direct) {
-      catalogDebugLog("Xtream direct live path: success", {
+      catalogDebugLog("Xtream direct live category shell: success", {
         sourceId: xtreamFast.sourceId,
         skippedLegacyChannelProbes: true,
       });
       return direct;
     }
-    catalogDebugLog("Xtream direct live path: failed, falling back to legacy channel / discovery probes");
+    catalogDebugLog("Xtream direct live category shell: failed, falling back to legacy channel / discovery probes");
   }
 
   const channelCandidates = [

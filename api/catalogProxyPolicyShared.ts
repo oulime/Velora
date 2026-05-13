@@ -25,7 +25,7 @@ export function isXtreamFrontendCatalogJsonTarget(targetUrl: string): boolean {
     if (!p.includes("/api/proxy/xtream/")) return false;
     if (p.endsWith("/player_api") || p.endsWith("/player_api.php")) {
       const a = u.searchParams.get("action")?.toLowerCase() ?? "";
-      return a === "get_series";
+      return a === "get_series" || a === "get_vod_streams" || a === "get_live_streams";
     }
     return false;
   } catch {

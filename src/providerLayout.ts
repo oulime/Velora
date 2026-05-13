@@ -259,7 +259,7 @@ export function buildProviderAdminConfig(
 ): AdminConfig {
   const withStreams = categories.filter((c) => streamCountForCategory(streamsByCat, c.category_id) > 0);
 
-  if (withStreams.length === 0) {
+  if (categories.length === 0) {
     return {
       countries: [],
       packages: [],
@@ -269,13 +269,17 @@ export function buildProviderAdminConfig(
     };
   }
 
-  const rows = withStreams.map((cat) => ({
+  const countryRows = categories.map((cat) => ({
+    cat,
+    parsed: inferCountryFromCategoryName(cat.category_name),
+  }));
+  const packageRows = withStreams.map((cat) => ({
     cat,
     parsed: inferCountryFromCategoryName(cat.category_name),
   }));
 
   const countryById = new Map<string, string>();
-  for (const { parsed } of rows) {
+  for (const { parsed } of countryRows) {
     if (parsed) countryById.set(parsed.id, parsed.name);
   }
 
@@ -301,7 +305,7 @@ export function buildProviderAdminConfig(
     return primaryIdByName.get(c.name) === c.id;
   });
 
-  const packages: AdminPackage[] = rows
+  const packages: AdminPackage[] = packageRows
     .map(({ cat, parsed }) => {
       let country_id = parsed?.id ?? OTHER_COUNTRY_ID;
       if (country_id !== OTHER_COUNTRY_ID) {

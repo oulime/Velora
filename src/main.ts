@@ -36,8 +36,11 @@ import {
   type LiveCategory,
   type LiveStream,
   tryNodecastLoginAndLoad,
-  fetchNodecastVodCatalog,
-  fetchNodecastSeriesCatalog,
+  fetchNodecastLiveStreamsForCategories,
+  fetchNodecastVodCategories,
+  fetchNodecastVodStreamsForCategories,
+  fetchNodecastSeriesCategories,
+  fetchNodecastSeriesStreamsForCategories,
   resolveNodecastStreamUrl,
   resolveNodecastVodStreamUrl,
   resolveNodecastSeriesPlayableUrl,
@@ -400,13 +403,17 @@ let state: {
   password: string;
   nodecastAuthHeaders?: Record<string, string>;
   serverInfo: ServerInfo;
+  liveCategories: LiveCategory[];
   /** Full provider catalog (used only to resolve streams matched by admin rules). */
   streamsByCatAll: Map<string, LiveStream[]>;
+  liveLoadedCategoryIds: Set<string>;
   nodecastXtreamSourceId?: string;
   vodCategories: LiveCategory[];
   vodStreamsByCat: Map<string, LiveStream[]>;
+  vodLoadedCategoryIds: Set<string>;
   seriesCategories: LiveCategory[];
   seriesStreamsByCat: Map<string, LiveStream[]>;
+  seriesLoadedCategoryIds: Set<string>;
   /** VOD / séries ne sont chargés qu’à l’ouverture des onglets (pas au login). */
   vodCatalogLoaded: boolean;
   seriesCatalogLoaded: boolean;
@@ -743,12 +750,16 @@ type NodecastSnapshotStateJson = {
   password: string;
   nodecastAuthHeaders?: Record<string, string>;
   serverInfo: ServerInfo;
+  liveCategories?: LiveCategory[];
   streamsByCatAll: [string, LiveStream[]][];
+  liveLoadedCategoryIds?: string[];
   nodecastXtreamSourceId?: string;
   vodCategories: LiveCategory[];
   vodStreamsByCat: [string, LiveStream[]][];
+  vodLoadedCategoryIds?: string[];
   seriesCategories: LiveCategory[];
   seriesStreamsByCat: [string, LiveStream[]][];
+  seriesLoadedCategoryIds?: string[];
   vodCatalogLoaded: boolean;
   seriesCatalogLoaded: boolean;
 };
@@ -790,12 +801,16 @@ function persistVeloraNodecastSnapshot(): void {
         password: state.password,
         nodecastAuthHeaders: state.nodecastAuthHeaders,
         serverInfo: state.serverInfo,
+        liveCategories: state.liveCategories,
         streamsByCatAll: [...state.streamsByCatAll.entries()],
+        liveLoadedCategoryIds: [...state.liveLoadedCategoryIds],
         nodecastXtreamSourceId: state.nodecastXtreamSourceId,
         vodCategories: state.vodCategories,
         vodStreamsByCat: [...state.vodStreamsByCat.entries()],
+        vodLoadedCategoryIds: [...state.vodLoadedCategoryIds],
         seriesCategories: state.seriesCategories,
         seriesStreamsByCat: [...state.seriesStreamsByCat.entries()],
+        seriesLoadedCategoryIds: [...state.seriesLoadedCategoryIds],
         vodCatalogLoaded: state.vodCatalogLoaded,
         seriesCatalogLoaded: state.seriesCatalogLoaded,
       },
@@ -817,12 +832,16 @@ function deserializeNodecastSnapshotState(p: NodecastSnapshotStateJson): NonNull
     password: p.password,
     nodecastAuthHeaders: p.nodecastAuthHeaders,
     serverInfo: p.serverInfo,
+    liveCategories: p.liveCategories ?? [],
     streamsByCatAll: new Map(p.streamsByCatAll),
+    liveLoadedCategoryIds: new Set(p.liveLoadedCategoryIds ?? []),
     nodecastXtreamSourceId: p.nodecastXtreamSourceId,
     vodCategories: p.vodCategories,
     vodStreamsByCat: new Map(p.vodStreamsByCat),
+    vodLoadedCategoryIds: new Set(p.vodLoadedCategoryIds ?? []),
     seriesCategories: p.seriesCategories,
     seriesStreamsByCat: new Map(p.seriesStreamsByCat),
+    seriesLoadedCategoryIds: new Set(p.seriesLoadedCategoryIds ?? []),
     vodCatalogLoaded: p.vodCatalogLoaded,
     seriesCatalogLoaded: p.seriesCatalogLoaded,
   };
@@ -6438,24 +6457,97 @@ function openNodecastMediaShell(tab: "movies" | "series"): void {
   void openNodecastMediaShellAsync(tab);
 }
 
-/** Charge films ou séries Nodecast si besoin (login initial = maps vides). */
-async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): Promise<void> {
+function mediaCategoryIdsForSelectedCountry(categories: LiveCategory[]): string[] {
+  const selectedName = selectedCountryDisplayName();
+  const selectedKey = selectedName ? normalizeCountryDisplayKey(selectedName) : "";
+  if (!selectedKey) return [];
+  const wantsOther = selectedKey === normalizeCountryDisplayKey("Autres");
+  return categories
+    .filter((category) => {
+      const parsed = inferCountryFromCategoryName(category.category_name);
+      if (!parsed) return wantsOther;
+      return normalizeCountryDisplayKey(parsed.name) === selectedKey;
+    })
+    .map((category) => String(category.category_id))
+    .filter(Boolean);
+}
+
+function mergeStreamsByCategory(
+  target: Map<string, LiveStream[]>,
+  incoming: Map<string, LiveStream[]>
+): void {
+  for (const [categoryId, streams] of incoming.entries()) {
+    const existing = target.get(categoryId) ?? [];
+    const byId = new Map(existing.map((stream) => [stream.stream_id, stream]));
+    for (const stream of streams) byId.set(stream.stream_id, stream);
+    target.set(categoryId, [...byId.values()]);
+  }
+}
+
+async function ensureSelectedCountryLiveCatalogReady(): Promise<void> {
   if (!state || state.mode !== "nodecast") return;
   const sid = state.nodecastXtreamSourceId?.trim();
   if (!sid) return;
+  const wantedCategoryIds = mediaCategoryIdsForSelectedCountry(state.liveCategories);
+  const missingCategoryIds = wantedCategoryIds.filter(
+    (categoryId) => !state?.liveLoadedCategoryIds.has(categoryId)
+  );
+  if (!missingCategoryIds.length) return;
+  const streamsByCat = await fetchNodecastLiveStreamsForCategories(
+    state.base,
+    sid,
+    missingCategoryIds,
+    state.nodecastAuthHeaders
+  );
+  if (!state) return;
+  mergeStreamsByCategory(state.streamsByCatAll, streamsByCat);
+  for (const categoryId of missingCategoryIds) state.liveLoadedCategoryIds.add(categoryId);
+  adminConfig = buildProviderAdminConfig(state.liveCategories, state.streamsByCatAll);
+  persistVeloraNodecastSnapshot();
+}
 
-  if (tab === "movies" && !state.vodCatalogLoaded) {
-    setCatalogLoadingVisible(true, "Chargement des films…", "movies");
+/** Charge films ou séries Nodecast si besoin (login initial = maps vides). */
+async function ensureNodecastVodOrSeriesCatalogReady(
+  tab: "movies" | "series",
+  opts?: { showLoading?: boolean }
+): Promise<void> {
+  if (!state || state.mode !== "nodecast") return;
+  const sid = state.nodecastXtreamSourceId?.trim();
+  if (!sid) return;
+  const showLoading = opts?.showLoading !== false;
+
+  if (tab === "movies") {
+    if (showLoading) setCatalogLoadingVisible(true, "Chargement des films…", "movies");
     nodecastVodCatalogFetchError = null;
     try {
-      const v = await fetchNodecastVodCatalog(state.base, sid, state.nodecastAuthHeaders);
+      if (!state.vodCatalogLoaded) {
+        state.vodCategories = await fetchNodecastVodCategories(
+          state.base,
+          sid,
+          state.nodecastAuthHeaders
+        );
+        state.vodCatalogLoaded = true;
+      }
+      const wantedCategoryIds = mediaCategoryIdsForSelectedCountry(state.vodCategories);
+      const missingCategoryIds = wantedCategoryIds.filter(
+        (categoryId) => !state?.vodLoadedCategoryIds.has(categoryId)
+      );
+      if (missingCategoryIds.length > 0) {
+        const streamsByCat = await fetchNodecastVodStreamsForCategories(
+          state.base,
+          sid,
+          missingCategoryIds,
+          state.nodecastAuthHeaders
+        );
+        if (!state) return;
+        mergeStreamsByCategory(state.vodStreamsByCat, streamsByCat);
+        for (const categoryId of missingCategoryIds) state.vodLoadedCategoryIds.add(categoryId);
+      }
       if (!state) return;
-      state.vodCategories = v.categories ?? [];
-      state.vodStreamsByCat = v.streamsByCat instanceof Map ? v.streamsByCat : new Map();
       vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
-      state.vodCatalogLoaded = true;
       nodecastVodCatalogFetchError = null;
       logVeloraRawMediaCatalogLayoutDebug("vod", state.vodCategories, state.vodStreamsByCat, vodAdminConfig);
+      persistVeloraNodecastSnapshot();
     } catch (err) {
       nodecastVodCatalogFetchError = err instanceof Error ? err.message : String(err);
       console.error("[Velora] VOD catalogue fetch failed", err);
@@ -6463,20 +6555,39 @@ async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): 
         state.vodCatalogLoaded = false;
       }
     } finally {
-      setCatalogLoadingVisible(false);
+      if (showLoading) setCatalogLoadingVisible(false);
     }
   }
 
-  if (tab === "series" && !state.seriesCatalogLoaded) {
-    setCatalogLoadingVisible(true, "Chargement des séries…", "series");
+  if (tab === "series") {
+    if (showLoading) setCatalogLoadingVisible(true, "Chargement des séries…", "series");
     nodecastSeriesCatalogFetchError = null;
     try {
-      const s = await fetchNodecastSeriesCatalog(state.base, sid, state.nodecastAuthHeaders);
+      if (!state.seriesCatalogLoaded) {
+        state.seriesCategories = await fetchNodecastSeriesCategories(
+          state.base,
+          sid,
+          state.nodecastAuthHeaders
+        );
+        state.seriesCatalogLoaded = true;
+      }
+      const wantedCategoryIds = mediaCategoryIdsForSelectedCountry(state.seriesCategories);
+      const missingCategoryIds = wantedCategoryIds.filter(
+        (categoryId) => !state?.seriesLoadedCategoryIds.has(categoryId)
+      );
+      if (missingCategoryIds.length > 0) {
+        const streamsByCat = await fetchNodecastSeriesStreamsForCategories(
+          state.base,
+          sid,
+          missingCategoryIds,
+          state.nodecastAuthHeaders
+        );
+        if (!state) return;
+        mergeStreamsByCategory(state.seriesStreamsByCat, streamsByCat);
+        for (const categoryId of missingCategoryIds) state.seriesLoadedCategoryIds.add(categoryId);
+      }
       if (!state) return;
-      state.seriesCategories = s.categories ?? [];
-      state.seriesStreamsByCat = s.streamsByCat instanceof Map ? s.streamsByCat : new Map();
       seriesAdminConfig = buildProviderAdminConfig(state.seriesCategories, state.seriesStreamsByCat);
-      state.seriesCatalogLoaded = true;
       nodecastSeriesCatalogFetchError = null;
       logVeloraRawMediaCatalogLayoutDebug(
         "series",
@@ -6484,6 +6595,7 @@ async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): 
         state.seriesStreamsByCat,
         seriesAdminConfig
       );
+      persistVeloraNodecastSnapshot();
     } catch (err) {
       nodecastSeriesCatalogFetchError = err instanceof Error ? err.message : String(err);
       console.error("[Velora] Series catalogue fetch failed", err);
@@ -6491,9 +6603,38 @@ async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): 
         state.seriesCatalogLoaded = false;
       }
     } finally {
-      setCatalogLoadingVisible(false);
+      if (showLoading) setCatalogLoadingVisible(false);
     }
   }
+}
+
+async function warmSelectedCountryCatalogs(): Promise<void> {
+  if (!state || state.mode !== "nodecast") return;
+  const selectedName = selectedCountryDisplayName();
+  setCatalogLoadingVisible(
+    true,
+    selectedName ? `Chargement de ${selectedName}…` : "Chargement du pays…",
+    uiTab
+  );
+  try {
+    await Promise.all([
+      ensureSelectedCountryLiveCatalogReady(),
+      ensureNodecastVodOrSeriesCatalogReady("movies", { showLoading: false }),
+      ensureNodecastVodOrSeriesCatalogReady("series", { showLoading: false }),
+    ]);
+    populateCountrySelectFromAdmin();
+  } finally {
+    setCatalogLoadingVisible(false);
+  }
+}
+
+function selectedCountryMediaSlicesLoaded(tab: "movies" | "series"): boolean {
+  if (!state || state.mode !== "nodecast") return false;
+  const categories = tab === "movies" ? state.vodCategories : state.seriesCategories;
+  const loaded = tab === "movies" ? state.vodLoadedCategoryIds : state.seriesLoadedCategoryIds;
+  const catalogLoaded = tab === "movies" ? state.vodCatalogLoaded : state.seriesCatalogLoaded;
+  if (!catalogLoaded) return false;
+  return mediaCategoryIdsForSelectedCountry(categories).every((categoryId) => loaded.has(categoryId));
 }
 
 async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<void> {
@@ -6514,13 +6655,14 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
     return;
   }
 
-  await ensureNodecastVodOrSeriesCatalogReady(tab);
+  if (!selectedCountryMediaSlicesLoaded(tab)) {
+    await ensureNodecastVodOrSeriesCatalogReady(tab);
+  }
 
   if (!state) return;
-  const map = tab === "movies" ? state.vodStreamsByCat : state.seriesStreamsByCat;
-  if (countStreamsInMap(map) === 0) {
-    const fetchErr = tab === "movies" ? nodecastVodCatalogFetchError : nodecastSeriesCatalogFetchError;
-    showVodPlaceholder(tab, fetchErr ? "catalog-fetch-error" : "empty");
+  const fetchErr = tab === "movies" ? nodecastVodCatalogFetchError : nodecastSeriesCatalogFetchError;
+  if (fetchErr) {
+    showVodPlaceholder(tab, "catalog-fetch-error");
     return;
   }
   activeStreamId = null;
@@ -6826,15 +6968,21 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
       password,
       nodecastAuthHeaders,
       serverInfo: serverInfo!,
+      liveCategories: nodecast.categories,
       streamsByCatAll: new Map(streamsByCat),
+      liveLoadedCategoryIds: new Set(streamsByCat.keys()),
       nodecastXtreamSourceId: nodecast.nodecastXtreamSourceId,
       vodCategories: nodecast.vodCategories,
       vodStreamsByCat: nodecast.vodStreamsByCat,
+      vodLoadedCategoryIds: new Set(),
       seriesCategories: nodecast.seriesCategories,
       seriesStreamsByCat: nodecast.seriesStreamsByCat,
+      seriesLoadedCategoryIds: new Set(),
       vodCatalogLoaded: false,
       seriesCatalogLoaded: false,
     };
+
+    await warmSelectedCountryCatalogs();
 
     selectedPillId = "all";
     activeStreamId = null;
@@ -6943,6 +7091,13 @@ function onCountryChange(): void {
     const merged = mergedPackagesForGrid();
     if (!merged.some((p) => p.id === uiAdminPackageId)) {
       showPackagesShell();
+      void (async () => {
+        await warmSelectedCountryCatalogs();
+        if (state && uiAdminPackageId == null) {
+          schedulePackagesGridRender();
+          syncPlayerDismissOverlay();
+        }
+      })();
       return;
     }
     if (uiTab === "live") {
@@ -6955,8 +7110,13 @@ function onCountryChange(): void {
   }
 
   if (uiShell === "packages") {
-    schedulePackagesGridRender();
-    syncPlayerDismissOverlay();
+    void (async () => {
+      await warmSelectedCountryCatalogs();
+      if (state && uiShell === "packages") {
+        schedulePackagesGridRender();
+        syncPlayerDismissOverlay();
+      }
+    })();
   }
 
   schedulePersistVeloraUiRoute();
