@@ -314,6 +314,7 @@ let packageChannelOrderByKey: Map<string, number[]> = new Map();
 let packageGridOrderByKey: Map<string, string[]> = new Map();
 /** Bouquets présents sur la grille uniquement grâce à la liste globale Supabase (popup avant ouverture). */
 let globalAllowlistInjectedPackageIds = new Set<string>();
+let packagesGridRenderToken = 0;
 
 function isGlobalAllowlistInjectedPackageId(packageId: string): boolean {
   return globalAllowlistInjectedPackageIds.has(packageId);
@@ -4507,16 +4508,30 @@ function getPackageChannelOrder(packageId: string): number[] | null {
 }
 
 /** Alphabetical live streams for a package (no manual order). */
-function liveStreamsAlphaForPackage(packageId: string): LiveStream[] {
+function liveStreamsAlphaForPackageWithContext(
+  packageId: string,
+  unionStreamsForCountry: LiveStream[],
+  isFranceContext: boolean,
+  curationForSelectedDbCountry: Map<number, string> | null
+): LiveStream[] {
   if (!state) return [];
   return listStreamsForOpenedPackage({
     packageId,
     streamsByCatAll: state.streamsByCatAll,
-    unionStreamsForCountry: unionStreamsForCurrentCountry(),
-    isFranceContext: isSelectedCountryFrance(),
+    unionStreamsForCountry,
+    isFranceContext,
     isLikelyUuidPackage: isLikelyUuid,
-    curationForSelectedDbCountry: curationMapForSelection(),
+    curationForSelectedDbCountry,
   });
+}
+
+function liveStreamsAlphaForPackage(packageId: string): LiveStream[] {
+  return liveStreamsAlphaForPackageWithContext(
+    packageId,
+    unionStreamsForCurrentCountry(),
+    isSelectedCountryFrance(),
+    curationMapForSelection()
+  );
 }
 
 async function persistPackageChannelOrder(packageId: string, streamIds: number[]): Promise<void> {
@@ -5139,17 +5154,41 @@ function renderPackagesGrid(): void {
   if (showAdminLiveGridExtras) appendAddPackageCard();
 
   const orderedPkgs = applySavedPackageGridOrder(mergedPackagesForGrid(), getSavedPackageGridOrder(uiTab));
+  const packageStreamsForGrid = new Map<string, LiveStream[]>();
+  const liveUnionStreams = uiTab === "live" ? unionStreamsForCurrentCountry() : null;
+  const liveFranceContext = uiTab === "live" ? isSelectedCountryFrance() : false;
+  const liveCuration = uiTab === "live" ? curationMapForSelection() : null;
+  const streamsDisplayedForGridPackage = (packageId: string): LiveStream[] => {
+    const cached = packageStreamsForGrid.get(packageId);
+    if (cached) return cached;
+    const streams =
+      uiTab === "live" && liveUnionStreams
+        ? applySavedOrder(
+            liveStreamsAlphaForPackageWithContext(
+              packageId,
+              liveUnionStreams,
+              liveFranceContext,
+              liveCuration
+            ),
+            getPackageChannelOrder(packageId)
+          )
+        : streamsDisplayedForOpenPackage(packageId);
+    packageStreamsForGrid.set(packageId, streams);
+    return streams;
+  };
+  const streamsForGridPackageCoverFallback = (packageId: string): LiveStream[] =>
+    streamsDisplayedForGridPackage(packageId).filter((s) => !shouldHideChannelByName(s.name));
   logVeloraSelectedCountryPackagesDebug();
   /** Admin (?admin=1) : tous les bouquets y compris catalogue « supprimés » (masqués visiteurs). Visiteurs : hors supprimés et sans chaînes vides. */
   const pkgs = orderedPkgs.filter((pkg) => {
     if (isAdminSession()) return true;
     if (isSoftDeletedNonDbPackage(pkg.id)) return false;
-    return streamsDisplayedForOpenPackage(pkg.id).length > 0;
+    return streamsDisplayedForGridPackage(pkg.id).length > 0;
   });
   for (const pkg of pkgs) {
     const isDb = isLikelyUuid(pkg.id);
     const isSoftDeleted = isSoftDeletedNonDbPackage(pkg.id);
-    const matched = streamsForPackageCoverFallback(pkg.id);
+    const matched = streamsForGridPackageCoverFallback(pkg.id);
     const channelFirstIcon = matched
       .map((s) => resolvedIconUrl(s.stream_icon, st.base))
       .find(Boolean);
@@ -5419,6 +5458,30 @@ function renderPackagesGrid(): void {
   }
 }
 
+function releasePackagesGridRenderBlock(token: number): void {
+  if (token !== packagesGridRenderToken) return;
+  elPackagesView.removeAttribute("aria-busy");
+  elPackagesView.style.removeProperty("pointer-events");
+}
+
+function schedulePackagesGridRender(): void {
+  const token = ++packagesGridRenderToken;
+  elPackagesView.setAttribute("aria-busy", "true");
+  elPackagesView.style.pointerEvents = "none";
+  requestAnimationFrame(() => {
+    if (token !== packagesGridRenderToken) return;
+    if (uiShell !== "packages") {
+      releasePackagesGridRenderBlock(token);
+      return;
+    }
+    try {
+      renderPackagesGrid();
+    } finally {
+      releasePackagesGridRenderBlock(token);
+    }
+  });
+}
+
 function maybeConfirmThenOpenAdminPackage(packageId: string): void {
   if (!isGlobalAllowlistInjectedPackageId(packageId)) {
     openAdminPackage(packageId);
@@ -5536,7 +5599,7 @@ function applyPackagesShellUi(): void {
   elCatPillsWrap.classList.add("hidden");
   selectedPillId = "all";
   syncAdminAddChannelsButton();
-  if (state) renderPackagesGrid();
+  if (state) schedulePackagesGridRender();
   syncCatalogBackButtonLabel();
   syncPlayerDismissOverlay();
   syncMainInPackageClass();
@@ -6892,7 +6955,7 @@ function onCountryChange(): void {
   }
 
   if (uiShell === "packages") {
-    renderPackagesGrid();
+    schedulePackagesGridRender();
     syncPlayerDismissOverlay();
   }
 

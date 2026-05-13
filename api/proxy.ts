@@ -15,7 +15,10 @@ import {
   schedulePutCatalogToR2,
   tryGetCatalogFromR2,
 } from "./r2CatalogCacheShared.js";
-import { isXtreamLiveCatalogR2CacheTarget } from "./catalogProxyPolicyShared.js";
+import {
+  isCatalogJsonCacheDisabledByEnv,
+  isXtreamLiveCatalogR2CacheTarget,
+} from "./catalogProxyPolicyShared.js";
 import { ensureProxyTrialAllowsRequest } from "./proxyTrialGate.js";
 
 const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
@@ -302,6 +305,7 @@ function applyCatalogCachingHeaders(
 ): void {
   if ((req.method ?? "GET").toUpperCase() !== "GET") return;
   if (!upstream.ok) return;
+  if (isCatalogJsonCacheDisabledByEnv(process.env)) return;
   if (!isXtreamLiveCatalogR2CacheTarget(targetUrl)) return;
   // Shared edge cache on Vercel for 10 min; browser still revalidates.
   res.setHeader("Cache-Control", "public, max-age=0, s-maxage=600, stale-while-revalidate=60");
@@ -437,7 +441,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     abortMs = Math.min(defaultUpstreamMs, streamProbeCapMs);
   }
   const catalogR2Eligible =
-    method === "GET" && requestBody === undefined && isXtreamLiveCatalogR2CacheTarget(target);
+    method === "GET" &&
+    requestBody === undefined &&
+    !isCatalogJsonCacheDisabledByEnv(process.env) &&
+    isXtreamLiveCatalogR2CacheTarget(target);
 
   const t = setTimeout(() => ac.abort(), abortMs);
   try {

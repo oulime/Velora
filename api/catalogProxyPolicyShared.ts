@@ -52,8 +52,7 @@ export function isXtreamLiveCatalogR2CacheTarget(targetUrl: string): boolean {
     ) {
       return true;
     }
-    if (!p.includes("/api/proxy/xtream/")) return false;
-    return p.endsWith("/live_categories") || p.endsWith("/live_streams");
+    return isXtreamFrontendCatalogJsonTarget(targetUrl);
   } catch {
     return false;
   }

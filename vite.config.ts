@@ -14,7 +14,10 @@ import {
   schedulePutCatalogToR2,
   tryGetCatalogFromR2,
 } from "./api/r2CatalogCacheShared";
-import { isXtreamLiveCatalogR2CacheTarget } from "./api/catalogProxyPolicyShared";
+import {
+  isCatalogJsonCacheDisabledByEnv,
+  isXtreamLiveCatalogR2CacheTarget,
+} from "./api/catalogProxyPolicyShared";
 import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
 import { handleTrialIncrement, handleTrialStatus } from "./api/trialShared";
 import {
@@ -439,7 +442,10 @@ function proxyMiddleware(mode: string) {
       q,
       from
     );
-    const cacheableCatalogRequest = method === "GET" && isXtreamLiveCatalogR2CacheTarget(q);
+    const cacheableCatalogRequest =
+      method === "GET" &&
+      !isCatalogJsonCacheDisabledByEnv(env) &&
+      isXtreamLiveCatalogR2CacheTarget(q);
     if (cacheableCatalogRequest && isR2CatalogCacheConfigured(env)) {
       const r2Hit = await tryGetCatalogFromR2(env, q);
       if (r2Hit?.body.length) {

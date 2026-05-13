@@ -63,6 +63,12 @@ function readR2CatalogConfig(env: NodeJS.ProcessEnv): R2Cfg | null {
   };
 }
 
+function catalogR2TtlMs(env: NodeJS.ProcessEnv): number {
+  const rawSeconds = Number(env.CATALOG_R2_TTL_SECONDS);
+  if (!Number.isFinite(rawSeconds) || rawSeconds <= 0) return CATALOG_R2_TTL_MS;
+  return Math.min(Math.max(Math.round(rawSeconds) * 1000, 60_000), 24 * 60 * 60 * 1000);
+}
+
 export function isR2CatalogCacheConfigured(env: NodeJS.ProcessEnv): boolean {
   return readR2CatalogConfig(env) != null;
 }
@@ -156,7 +162,7 @@ export function schedulePutCatalogToR2(
   const cfg = readR2CatalogConfig(env);
   if (!cfg) return;
   const key = catalogCacheR2ObjectKey(targetUrl);
-  const expiresAt = Date.now() + CATALOG_R2_TTL_MS;
+  const expiresAt = Date.now() + catalogR2TtlMs(env);
   const ct = (contentType && contentType.trim()) || "application/json";
   const etagMeta = (upstreamEtag && upstreamEtag.trim()) || "";
   void (async () => {
