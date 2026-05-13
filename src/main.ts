@@ -19,7 +19,7 @@ import {
   EMPTY_ADMIN_CONFIG,
 } from "./adminHierarchyConfig";
 import { THEMES, presetForPackageName } from "./packageThemePresets";
-import { normalizeCountryKey } from "./canonicalCountries";
+import { matchCanonicalCountry, normalizeCountryKey } from "./canonicalCountries";
 import { fetchAndApplyCanonicalCountries } from "./canonicalCountriesSupabase";
 import { fetchAndApplyChannelNamePrefixes } from "./channelNamePrefixesSupabase";
 import { fetchAndApplyChannelHideNeedles } from "./channelHideNeedlesSupabase";
@@ -31,7 +31,7 @@ import {
   getGlobalPackageAllowlistLines,
   getGlobalPackageOpenConfirmUi,
 } from "./globalPackageAllowlistSupabase";
-import { buildProviderAdminConfig } from "./providerLayout";
+import { buildProviderAdminConfig, inferCountryFromCategoryName } from "./providerLayout";
 import {
   type LiveCategory,
   type LiveStream,
@@ -288,6 +288,9 @@ let adminConfig: AdminConfig = { ...EMPTY_ADMIN_CONFIG };
 /** Pays › bouquets dérivés des catégories VOD / séries (même logique que le live). */
 let vodAdminConfig: AdminConfig = { ...EMPTY_ADMIN_CONFIG };
 let seriesAdminConfig: AdminConfig = { ...EMPTY_ADMIN_CONFIG };
+/** Dernier échec de chargement catalogue (affiché si le stockage local est vide après fetch). */
+let nodecastVodCatalogFetchError: string | null = null;
+let nodecastSeriesCatalogFetchError: string | null = null;
 
 type UiTab = "live" | "movies" | "series";
 type UiShell = "packages" | "content";
@@ -682,13 +685,14 @@ async function tryApplyVeloraUiRouteAfterSessionReady(opts?: {
   const ac = r.adminCountryId?.trim();
   if (ac && state) {
     const countries = countryRowsForSelect();
-    if (countries.some((c) => c.id === ac)) {
-      selectedAdminCountryId = ac;
-      if ([...elCountrySelect.options].some((o) => o.value === ac)) {
-        elCountrySelect.value = ac;
+    const resolved = resolveCountryIdToValidGlobalId(ac, countries);
+    if (resolved) {
+      selectedAdminCountryId = resolved;
+      if ([...elCountrySelect.options].some((o) => o.value === resolved)) {
+        elCountrySelect.value = resolved;
       }
       try {
-        sessionStorage.setItem(COUNTRY_STORAGE_KEY, ac);
+        sessionStorage.setItem(COUNTRY_STORAGE_KEY, resolved);
       } catch {
         /* ignore */
       }
@@ -856,8 +860,8 @@ async function tryRestoreVeloraNodecastSnapshot(): Promise<boolean> {
     setCatalogLoadingVisible(true, "Restauration de la session…", "live");
     state = deserializeNodecastSnapshotState(snap.state);
     adminConfig = snap.adminConfig;
-    vodAdminConfig = snap.vodAdminConfig;
-    seriesAdminConfig = snap.seriesAdminConfig;
+    vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
+    seriesAdminConfig = buildProviderAdminConfig(state.seriesCategories, state.seriesStreamsByCat);
 
     await fetchAndApplyCanonicalCountries();
     await fetchAndApplyChannelNamePrefixes();
@@ -3856,23 +3860,166 @@ function providerLayoutForUiTab(): AdminConfig {
   return adminConfig;
 }
 
-/** Pays du header : même liste que le live (catalogue + Supabase), aussi pour Films / Séries. */
-function countryRowsForSelect(): AdminCountry[] {
-  const provider = adminConfig.countries;
-  const seen = new Set(provider.map((c) => c.name.trim().toLowerCase()));
-  const out: AdminCountry[] = [...provider];
-  for (const c of dbAdminCountries) {
-    const k = c.name.trim().toLowerCase();
-    if (seen.has(k)) continue;
-    out.push(c);
-    seen.add(k);
+const GLOBAL_COUNTRY_OTHER_KEY = "__autres__";
+
+/** Same rules as catalogue / Supabase country matching (ASCII lower, strip accents). */
+function normalizeCountryLabel(value: string): string {
+  return normalizeCountryKey(value);
+}
+
+function normalizeCountryDisplayKey(name: string): string {
+  return normalizeCountryKey(name);
+}
+
+function countryNameForIdInLayout(countryId: string, layout: AdminConfig): string | null {
+  return layout.countries.find((c) => c.id === countryId)?.name?.trim() || null;
+}
+
+function getCountryDisplayNameFromLayout(countryId: string, layout: AdminConfig): string | null {
+  return countryNameForIdInLayout(countryId, layout);
+}
+
+function getCountryDisplayNameFromAnySource(countryId: string): string | null {
+  for (const layout of [adminConfig, vodAdminConfig, seriesAdminConfig]) {
+    const n = getCountryDisplayNameFromLayout(countryId, layout);
+    if (n) return n;
   }
-  out.sort((a, b) => {
-    if (a.id === OTHER_COUNTRY_ID) return 1;
-    if (b.id === OTHER_COUNTRY_ID) return -1;
-    return a.name.localeCompare(b.name, "fr");
+  if (isLikelyUuid(countryId)) {
+    const d = dbAdminCountries.find((c) => c.id === countryId);
+    const n = d?.name?.trim();
+    if (n) return n;
+  }
+  return null;
+}
+
+function countryGlobalMergeKeyFromCountryRow(c: AdminCountry): string {
+  if (c.id === OTHER_COUNTRY_ID) return GLOBAL_COUNTRY_OTHER_KEY;
+  const nk = normalizeCountryLabel(c.name);
+  return nk.length ? nk : GLOBAL_COUNTRY_OTHER_KEY;
+}
+
+type GlobalCountrySource = "live" | "movies" | "series" | "supabase";
+
+type GlobalCountryRowAcc = {
+  mergeKey: string;
+  displayName: string;
+  idLive?: string;
+  idSupabase?: string;
+  idMovies?: string;
+  idSeries?: string;
+  sortHint: number;
+  sources: Set<GlobalCountrySource>;
+};
+
+function buildGlobalCountryRowsForSelect(): AdminCountry[] {
+  const byKey = new Map<string, GlobalCountryRowAcc>();
+
+  const touch = (c: AdminCountry, source: GlobalCountrySource, hint: number): void => {
+    const mergeKey = countryGlobalMergeKeyFromCountryRow(c);
+    let row = byKey.get(mergeKey);
+    if (!row) {
+      row = {
+        mergeKey,
+        displayName: c.name.trim(),
+        sortHint: hint,
+        sources: new Set(),
+      };
+      byKey.set(mergeKey, row);
+    }
+    row.sources.add(source);
+    row.sortHint = Math.min(row.sortHint, hint);
+    if (source === "supabase") {
+      row.idSupabase = c.id;
+      row.displayName = c.name.trim();
+    } else if (source === "live") {
+      row.idLive = c.id;
+      if (!row.idSupabase) row.displayName = c.name.trim();
+    } else if (source === "movies") {
+      row.idMovies = c.id;
+      if (!row.idSupabase && !row.idLive) row.displayName = c.name.trim();
+    } else if (source === "series") {
+      row.idSeries = c.id;
+      if (!row.idSupabase && !row.idLive && !row.idMovies) row.displayName = c.name.trim();
+    }
+  };
+
+  dbAdminCountries.forEach((c, i) => touch(c, "supabase", i));
+  adminConfig.countries.forEach((c, i) => touch(c, "live", 1000 + i));
+  vodAdminConfig.countries.forEach((c, i) => touch(c, "movies", 2000 + i));
+  seriesAdminConfig.countries.forEach((c, i) => touch(c, "series", 3000 + i));
+
+  const internal = [...byKey.values()];
+  internal.sort((a, b) => {
+    if (a.mergeKey === GLOBAL_COUNTRY_OTHER_KEY) return 1;
+    if (b.mergeKey === GLOBAL_COUNTRY_OTHER_KEY) return -1;
+    if (a.mergeKey === "france") return -1;
+    if (b.mergeKey === "france") return 1;
+    const cmp = a.displayName.localeCompare(b.displayName, "fr");
+    if (cmp !== 0) return cmp;
+    return a.sortHint - b.sortHint;
   });
+
+  const out: AdminCountry[] = [];
+  for (const row of internal) {
+    const id = row.idLive ?? row.idSupabase ?? row.idMovies ?? row.idSeries;
+    if (!id) continue;
+    out.push({ id, name: row.displayName });
+  }
+
+  if (isVeloraCatalogCacheDebugEnabled()) {
+    console.info("[Velora] Global country list", {
+      count: out.length,
+      first50Names: out.slice(0, 50).map((c) => c.name),
+      first50Sources: out.slice(0, 50).map((c) => {
+        const mk = countryGlobalMergeKeyFromCountryRow(c);
+        const acc = byKey.get(mk);
+        return acc ? [...acc.sources].sort().join("+") : "?";
+      }),
+    });
+  }
+
   return out;
+}
+
+/** Pays du header : une seule liste fusionnée (Live + Films + Séries + Supabase), identique sur tous les onglets. */
+function countryRowsForSelect(): AdminCountry[] {
+  return buildGlobalCountryRowsForSelect();
+}
+
+function selectedCountryMatchesPackage(
+  packageCountryId: string,
+  selectedCountryId: string,
+  layout: AdminConfig
+): boolean {
+  if (!selectedCountryId) return false;
+  if (packageCountryId === selectedCountryId) return true;
+
+  const pkgName =
+    getCountryDisplayNameFromLayout(packageCountryId, layout) ??
+    (isLikelyUuid(packageCountryId)
+      ? dbAdminCountries.find((c) => c.id === packageCountryId)?.name.trim() ?? null
+      : null);
+  const selName = getCountryDisplayNameFromAnySource(selectedCountryId);
+  if (!pkgName || !selName) return false;
+
+  if (normalizeCountryLabel(pkgName) === normalizeCountryLabel(selName)) return true;
+
+  const dbPkg = matchDbCountryIdByDisplayName(pkgName, dbAdminCountries);
+  const dbSel = matchDbCountryIdByDisplayName(selName, dbAdminCountries);
+  if (dbPkg && dbSel && dbPkg === dbSel) return true;
+  if (dbPkg && packageCountryId === dbPkg) return true;
+  if (dbSel && packageCountryId === dbSel) return true;
+  if (dbPkg && selectedCountryId === dbPkg) return true;
+  if (dbSel && selectedCountryId === dbSel) return true;
+
+  const canonPkg = matchCanonicalCountry(pkgName);
+  const canonSel = matchCanonicalCountry(selName);
+  if (canonPkg && canonSel) {
+    if (canonPkg.id === canonSel.id) return true;
+    if (normalizeCountryLabel(canonPkg.name) === normalizeCountryLabel(canonSel.name)) return true;
+  }
+
+  return false;
 }
 
 /** `VITE_DEFAULT_COUNTRY`: id exact, sinon nom affiché (normalisé comme le catalogue). */
@@ -3886,20 +4033,60 @@ function defaultCountryIdFromEnv(countries: AdminCountry[]): string | null {
   return hit?.id ?? null;
 }
 
+/** France si présente, sinon premier pays hors « Autres », sinon « Autres » (ne dépend pas de l’onglet ni des bouquets). */
+function pickDefaultCountryIdForGlobalList(countries: AdminCountry[]): string | null {
+  if (countries.length === 0) return null;
+  const fr = countries.find((c) => normalizeCountryLabel(c.name) === "france");
+  if (fr) return fr.id;
+  const regular = countries.filter(
+    (c) => c.id !== OTHER_COUNTRY_ID && normalizeCountryLabel(c.name) !== "autres"
+  );
+  if (regular.length) {
+    regular.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    return regular[0].id;
+  }
+  const autres = countries.find((c) => c.id === OTHER_COUNTRY_ID);
+  return autres?.id ?? countries[0]?.id ?? null;
+}
+
+function resolveCountryIdToValidGlobalId(
+  candidateId: string | null | undefined,
+  countries: AdminCountry[]
+): string | null {
+  if (!candidateId) return null;
+  if (countries.some((c) => c.id === candidateId)) return candidateId;
+  const label = getCountryDisplayNameFromAnySource(candidateId);
+  if (!label) return null;
+  const nk = normalizeCountryLabel(label);
+  const isAutres =
+    candidateId === OTHER_COUNTRY_ID ||
+    nk === "autres" ||
+    label.trim().toLowerCase() === "autres";
+  const hit = countries.find((c) => {
+    if (isAutres) {
+      return c.id === OTHER_COUNTRY_ID || normalizeCountryLabel(c.name) === "autres";
+    }
+    return normalizeCountryLabel(c.name) === nk;
+  });
+  return hit?.id ?? null;
+}
+
 function ensureSelectedCountry(): void {
   const countries = countryRowsForSelect();
   if (countries.length === 0) {
     selectedAdminCountryId = null;
     return;
   }
-  const valid =
-    selectedAdminCountryId != null &&
-    countries.some((c) => c.id === selectedAdminCountryId);
-  if (valid) return;
+  const fromCurrent = resolveCountryIdToValidGlobalId(selectedAdminCountryId, countries);
+  if (fromCurrent) {
+    selectedAdminCountryId = fromCurrent;
+    return;
+  }
   try {
     const stored = sessionStorage.getItem(COUNTRY_STORAGE_KEY);
-    if (stored && countries.some((c) => c.id === stored)) {
-      selectedAdminCountryId = stored;
+    const fromStored = resolveCountryIdToValidGlobalId(stored, countries);
+    if (fromStored) {
+      selectedAdminCountryId = fromStored;
       return;
     }
   } catch {
@@ -3910,7 +4097,7 @@ function ensureSelectedCountry(): void {
     selectedAdminCountryId = fromEnv;
     return;
   }
-  selectedAdminCountryId = countries[0]?.id ?? null;
+  selectedAdminCountryId = pickDefaultCountryIdForGlobalList(countries);
 }
 
 function populateCountrySelectFromAdmin(): void {
@@ -4138,41 +4325,121 @@ window.addEventListener("velora-global-packages-changed", () => {
 /** Bouquets fournisseur (live / VOD / séries) pour le pays sélectionné dans le header. */
 function packagesForSelectedCountry(): AdminPackage[] {
   const layout = providerLayoutForUiTab();
-  const liveCountries = adminConfig.countries;
-  if (!selectedAdminCountryId) return [];
-  if (isLikelyUuid(selectedAdminCountryId)) {
-    /* Canonical pays from Supabase use UUID ids — same shape as admin_countries. */
-    if (liveCountries.some((c) => c.id === selectedAdminCountryId)) {
-      return layout.packages
-        .filter((p) => p.country_id === selectedAdminCountryId)
-        .sort((a, b) => a.name.localeCompare(b.name, "fr"));
-    }
-    const dbC = dbAdminCountries.find((c) => c.id === selectedAdminCountryId);
-    if (!dbC) return [];
-    const key = normalizeCountryKey(dbC.name);
-    if (!key) return [];
-    const prov = liveCountries.find((c) => normalizeCountryKey(c.name) === key);
-    if (!prov) return [];
+  const sel = selectedAdminCountryId;
+  if (!sel) return [];
+
+  if (uiTab === "movies" || uiTab === "series") {
+    const selectedName = selectedCountryDisplayName();
+    const selectedKey = selectedName ? normalizeCountryDisplayKey(selectedName) : "";
+    if (!selectedKey) return [];
+
     return layout.packages
-      .filter((p) => p.country_id === prov.id)
+      .filter((pkg) => {
+        const pkgCountryName = countryNameForIdInLayout(pkg.country_id, layout);
+        if (
+          pkgCountryName &&
+          normalizeCountryDisplayKey(pkgCountryName) === selectedKey
+        ) {
+          return true;
+        }
+        return selectedCountryMatchesPackage(pkg.country_id, sel, layout);
+      })
       .sort((a, b) => a.name.localeCompare(b.name, "fr"));
   }
+
   return layout.packages
-    .filter((p) => p.country_id === selectedAdminCountryId)
+    .filter((p) => selectedCountryMatchesPackage(p.country_id, sel, layout))
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
+function logVeloraSelectedCountryPackagesDebug(): void {
+  if (!isVeloraCatalogCacheDebugEnabled()) return;
+  const packages = packagesForSelectedCountry();
+  const layout = providerLayoutForUiTab();
+  console.info("[Velora catalog] UI package selection debug", {
+    current_selected_country_id: selectedAdminCountryId,
+    current_selected_country_name: currentCountryDisplayLabel(),
+    active_tab: uiTab,
+    packagesForSelectedCountry_count: packages.length,
+    packagesForSelectedCountry_first_20: packages.slice(0, 20).map((pkg) => ({
+      packageName: pkg.name,
+      countryName: getCountryDisplayNameFromLayout(pkg.country_id, layout) ?? pkg.country_id,
+      itemCount:
+        uiTab === "movies"
+          ? state?.vodStreamsByCat.get(String(pkg.id))?.length ?? 0
+          : uiTab === "series"
+            ? state?.seriesStreamsByCat.get(String(pkg.id))?.length ?? 0
+            : state?.streamsByCatAll.get(String(pkg.id))?.length ?? 0,
+    })),
+  });
+}
+
 function currentCountryDisplayLabel(): string | null {
+  return selectedCountryDisplayName();
+}
+
+function selectedCountryDisplayName(): string | null {
   if (!selectedAdminCountryId) return null;
-  if (isLikelyUuid(selectedAdminCountryId)) {
-    const dbC = dbAdminCountries.find((c) => c.id === selectedAdminCountryId);
-    if (dbC) return dbC.name;
-    const liveProv = adminConfig.countries.find((c) => c.id === selectedAdminCountryId);
-    if (liveProv) return liveProv.name;
-    return null;
+
+  const fromGlobal = countryRowsForSelect()
+    .find((c) => c.id === selectedAdminCountryId)
+    ?.name?.trim();
+  if (fromGlobal) return fromGlobal;
+
+  for (const layout of [adminConfig, vodAdminConfig, seriesAdminConfig]) {
+    const n = countryNameForIdInLayout(selectedAdminCountryId, layout);
+    if (n) return n;
   }
-  const prov = adminConfig.countries.find((c) => c.id === selectedAdminCountryId);
-  return prov?.name ?? null;
+
+  const db = dbAdminCountries.find((c) => c.id === selectedAdminCountryId)?.name?.trim();
+  if (db) return db;
+
+  return null;
+}
+
+if (import.meta.env.DEV || isVeloraCatalogCacheDebugEnabled()) {
+  (window as Window & { veloraDebugMedia?: () => void }).veloraDebugMedia = function (): void {
+    const vodCountries = vodAdminConfig.countries.map((c) => ({
+      id: c.id,
+      name: c.name,
+      packages: vodAdminConfig.packages.filter((p) => p.country_id === c.id).length,
+      items: vodAdminConfig.packages
+        .filter((p) => p.country_id === c.id)
+        .reduce((sum, p) => sum + (state?.vodStreamsByCat.get(String(p.id))?.length ?? 0), 0),
+    }));
+
+    const seriesCountries = seriesAdminConfig.countries.map((c) => ({
+      id: c.id,
+      name: c.name,
+      packages: seriesAdminConfig.packages.filter((p) => p.country_id === c.id).length,
+      items: seriesAdminConfig.packages
+        .filter((p) => p.country_id === c.id)
+        .reduce((sum, p) => sum + (state?.seriesStreamsByCat.get(String(p.id))?.length ?? 0), 0),
+    }));
+
+    const selectedName = selectedCountryDisplayName();
+
+    console.table(vodCountries);
+    console.table(seriesCountries);
+    console.log({
+      uiTab,
+      selectedAdminCountryId,
+      selectedName,
+      selectedKey: selectedName ? normalizeCountryDisplayKey(selectedName) : null,
+      currentPackages: packagesForSelectedCountry().map((p) => ({
+        id: p.id,
+        name: p.name,
+        country_id: p.country_id,
+        countryName: countryNameForIdInLayout(p.country_id, providerLayoutForUiTab()),
+        itemCount:
+          uiTab === "movies"
+            ? state?.vodStreamsByCat.get(String(p.id))?.length ?? 0
+            : uiTab === "series"
+              ? state?.seriesStreamsByCat.get(String(p.id))?.length ?? 0
+              : state?.streamsByCatAll.get(String(p.id))?.length ?? 0,
+      })),
+    });
+  };
 }
 
 function isSelectedCountryFrance(): boolean {
@@ -4287,34 +4554,21 @@ function reorderVisibleStreamIds(ids: number[], fromIdx: number, toIdx: number, 
 
 function streamsDisplayedForOpenPackage(packageId: string): LiveStream[] {
   if (!state) return [];
+  /* Films / séries : liste brute Nodecast par catégorie (pas d’union live ni allowlist globale). */
   if (uiTab === "movies") {
-    return curatedStreamsForOpenPackageFromMap(packageId, state.vodStreamsByCat);
+    const list = state.vodStreamsByCat.get(String(packageId)) ?? [];
+    return [...list].sort((a, b) =>
+      displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr")
+    );
   }
   if (uiTab === "series") {
-    return curatedStreamsForOpenPackageFromMap(packageId, state.seriesStreamsByCat);
+    const list = state.seriesStreamsByCat.get(String(packageId)) ?? [];
+    return [...list].sort((a, b) =>
+      displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr")
+    );
   }
   const raw = liveStreamsAlphaForPackage(packageId);
   return applySavedOrder(raw, getPackageChannelOrder(packageId));
-}
-
-function curatedStreamsForOpenPackageFromMap(
-  packageId: string,
-  streamsByCat: Map<string, LiveStream[]>
-): LiveStream[] {
-  const nativeSet = new Set((streamsByCat.get(String(packageId)) ?? []).map((s) => s.stream_id));
-  const all = collectStreamsFromProviderCategories(streamsByCat, providerCategoryIdsForStreamUnion());
-  const cur = curationMapForSelection();
-  const out: LiveStream[] = [];
-  for (const s of all) {
-    const ct = cur?.get(s.stream_id) ?? null;
-    if (ct === STREAM_CURATION_HIDDEN) continue;
-    if (ct) {
-      if (ct === packageId) out.push(s);
-      continue;
-    }
-    if (nativeSet.has(s.stream_id)) out.push(s);
-  }
-  return out.sort((a, b) => displayChannelName(a.name).localeCompare(displayChannelName(b.name), "fr"));
 }
 
 /** Icône fallback grille / thème : uniquement des chaînes visibles (hors « Mots masqués — noms »). */
@@ -4378,18 +4632,12 @@ async function refreshSupabaseHierarchy(): Promise<void> {
 
 function matchedDbCountryIdForSelection(): string | null {
   if (!selectedAdminCountryId) return null;
-  if (isLikelyUuid(selectedAdminCountryId)) {
-    if (dbAdminCountries.some((c) => c.id === selectedAdminCountryId)) {
-      return selectedAdminCountryId;
-    }
-    /** Pays du catalogue (ex. UUID `canonical_countries`) — lier au pays Supabase par nom affiché. */
-    const prov = adminConfig.countries.find((x) => x.id === selectedAdminCountryId);
-    if (prov) return matchDbCountryIdByDisplayName(prov.name, dbAdminCountries);
-    return null;
+  if (dbAdminCountries.some((c) => c.id === selectedAdminCountryId)) {
+    return selectedAdminCountryId;
   }
-  const c = adminConfig.countries.find((x) => x.id === selectedAdminCountryId);
-  if (!c) return null;
-  return matchDbCountryIdByDisplayName(c.name, dbAdminCountries);
+  const label = getCountryDisplayNameFromAnySource(selectedAdminCountryId);
+  if (!label) return null;
+  return matchDbCountryIdByDisplayName(label, dbAdminCountries);
 }
 
 /**
@@ -4470,10 +4718,10 @@ function mergeGlobalAllowlistIntoPackages(base: AdminPackage[]): AdminPackage[] 
 }
 
 function mergedPackagesForGrid(): AdminPackage[] {
-  const provider = packagesForSelectedCountry();
   if (uiTab === "movies" || uiTab === "series") {
-    return mergeGlobalAllowlistIntoPackages([...provider]);
+    return packagesForSelectedCountry();
   }
+  const provider = packagesForSelectedCountry();
   const sid = resolvedDbCountryIdForAdminPackages();
   const fromDb = sid ? dbAdminPackages.filter((p) => p.country_id === sid) : [];
   const base = [...fromDb, ...provider];
@@ -4891,6 +5139,7 @@ function renderPackagesGrid(): void {
   if (showAdminLiveGridExtras) appendAddPackageCard();
 
   const orderedPkgs = applySavedPackageGridOrder(mergedPackagesForGrid(), getSavedPackageGridOrder(uiTab));
+  logVeloraSelectedCountryPackagesDebug();
   /** Admin (?admin=1) : tous les bouquets y compris catalogue « supprimés » (masqués visiteurs). Visiteurs : hors supprimés et sans chaînes vides. */
   const pkgs = orderedPkgs.filter((pkg) => {
     if (isAdminSession()) return true;
@@ -5162,10 +5411,10 @@ function renderPackagesGrid(): void {
     empty.style.gridColumn = "1 / -1";
     empty.textContent =
       uiTab === "movies"
-        ? "Aucun bouquet (catégorie) VOD pour ce pays. Essayez un autre pays ou « Autres »."
+        ? "Aucun film disponible pour ce pays."
         : uiTab === "series"
-          ? "Aucun bouquet (catégorie) séries pour ce pays. Essayez un autre pays ou « Autres »."
-          : "Aucune catégorie live pour ce pays dans le catalogue fournisseur. Essayez un autre pays ou « Autres ».";
+          ? "Aucune série disponible pour ce pays."
+          : "Aucune chaîne disponible pour ce pays.";
     elPackagesView.appendChild(empty);
   }
 }
@@ -5212,6 +5461,11 @@ function openAdminPackage(packageId: string, restore?: OpenAdminPackageRestore):
   const pkg = findPackageById(packageId);
   if (!pkg) return;
   const tab: UiTab = uiTab === "movies" || uiTab === "series" ? uiTab : "live";
+  if (isVeloraCatalogCacheDebugEnabled() && (tab === "movies" || tab === "series")) {
+    const map = tab === "movies" ? state.vodStreamsByCat : state.seriesStreamsByCat;
+    const raw = map.get(String(packageId)) ?? [];
+    console.info("[Velora] Package open", { packageId, tab, rawItemCount: raw.length });
+  }
   vodMovieUiPhase = "list";
   vodDetailStream = null;
   seriesUiPhase = "list";
@@ -5299,6 +5553,7 @@ function showPackagesShell(): void {
 
 function goLiveHome(): void {
   uiTab = "live";
+  populateCountrySelectFromAdmin();
   showPackagesShell();
 }
 
@@ -5999,9 +6254,67 @@ function countStreamsInMap(m: Map<string, LiveStream[]>): number {
   return n;
 }
 
+function logVeloraRawMediaCatalogLayoutDebug(
+  media: "vod" | "series",
+  categories: LiveCategory[],
+  streamsByCat: Map<string, LiveStream[]>,
+  layout: AdminConfig
+): void {
+  if (!isVeloraCatalogCacheDebugEnabled()) return;
+  const streamTotal = countStreamsInMap(streamsByCat);
+  const streamsMapKeyCount = streamsByCat.size;
+  const first30CategoryIdsWithItemCounts = [...streamsByCat.entries()]
+    .slice(0, 30)
+    .map(([categoryId, items]) => ({ categoryId, itemCount: items.length }));
+  const categoriesWithZeroItemsCount = categories.filter(
+    (category) => (streamsByCat.get(String(category.category_id))?.length ?? 0) === 0
+  ).length;
+  const countriesList = layout.countries.map((c) => c.name);
+  const autresCount = layout.packages.filter((p) => p.country_id === OTHER_COUNTRY_ID).length;
+  const pkgSamples30 = layout.packages.slice(0, 30).map((p) => ({
+    packageName: p.name,
+    countryName: getCountryDisplayNameFromLayout(p.country_id, layout) ?? p.country_id,
+    itemCount: streamsByCat.get(String(p.id))?.length ?? 0,
+  }));
+  const countryMatchingFirst30 = categories.slice(0, 30).map((c) => {
+    const parsed = inferCountryFromCategoryName(c.category_name);
+    return {
+      category_name: c.category_name,
+      parsedCountryName: parsed?.name ?? null,
+      parsedCountryId: parsed?.id ?? null,
+      itemCount: streamsByCat.get(String(c.category_id))?.length ?? 0,
+    };
+  });
+  if (media === "vod") {
+    console.info("[Velora catalog] VOD layout debug", {
+      vod_categories_count: categories.length,
+      vod_streams_total_count: streamTotal,
+      vodStreamsByCat_size: streamsMapKeyCount,
+      vodStreamsByCat_first_30_category_ids_with_item_counts: first30CategoryIdsWithItemCounts,
+      vod_categories_with_0_items_count: categoriesWithZeroItemsCount,
+      vodAdminConfig_countries_names: countriesList,
+      vod_packages_built_first_30: pkgSamples30,
+      packages_in_autres_count: autresCount,
+      country_matching_first_30_vod_categories: countryMatchingFirst30,
+    });
+  } else {
+    console.info("[Velora catalog] Series layout debug", {
+      series_categories_count: categories.length,
+      series_streams_total_count: streamTotal,
+      seriesStreamsByCat_size: streamsMapKeyCount,
+      seriesStreamsByCat_first_30_category_ids_with_item_counts: first30CategoryIdsWithItemCounts,
+      series_categories_with_0_items_count: categoriesWithZeroItemsCount,
+      seriesAdminConfig_countries_names: countriesList,
+      series_packages_built_first_30: pkgSamples30,
+      packages_in_autres_count: autresCount,
+      country_matching_first_30_series_categories: countryMatchingFirst30,
+    });
+  }
+}
+
 function showVodPlaceholder(
   kind: "movies" | "series",
-  reason: "no-nodecast" | "no-xtream-source" | "empty" = "no-nodecast"
+  reason: "no-nodecast" | "no-xtream-source" | "empty" | "catalog-fetch-error" = "no-nodecast"
 ): void {
   activeStreamId = null;
   destroyPlayer();
@@ -6029,6 +6342,19 @@ function showVodPlaceholder(
       kind === "movies"
         ? "Aucun <strong>film</strong> (VOD) dans le catalogue pour cette source Xtream."
         : "Aucune <strong>série</strong> dans le catalogue pour cette source Xtream.";
+  } else if (reason === "catalog-fetch-error") {
+    const detail =
+      kind === "movies"
+        ? nodecastVodCatalogFetchError ?? "Erreur réseau ou proxy."
+        : nodecastSeriesCatalogFetchError ?? "Erreur réseau ou proxy.";
+    msg.innerHTML =
+      kind === "movies"
+        ? `Impossible de charger le catalogue <strong>films</strong> (VOD).<br><span class="vel-muted">${escapeHtml(
+            detail
+          )}</span><br><small>Réessayez en cliquant de nouveau sur <strong>Films</strong>.</small>`
+        : `Impossible de charger le catalogue <strong>séries</strong>.<br><span class="vel-muted">${escapeHtml(
+            detail
+          )}</span><br><small>Réessayez en cliquant de nouveau sur <strong>Séries</strong>.</small>`;
   } else if (reason === "no-xtream-source") {
     msg.innerHTML =
       kind === "movies"
@@ -6055,42 +6381,51 @@ async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): 
   const sid = state.nodecastXtreamSourceId?.trim();
   if (!sid) return;
 
-  if (tab === "movies" && (!state.vodCatalogLoaded || countStreamsInMap(state.vodStreamsByCat) === 0)) {
+  if (tab === "movies" && !state.vodCatalogLoaded) {
     setCatalogLoadingVisible(true, "Chargement des films…", "movies");
+    nodecastVodCatalogFetchError = null;
     try {
       const v = await fetchNodecastVodCatalog(state.base, sid, state.nodecastAuthHeaders);
       if (!state) return;
-      state.vodCategories = v?.categories ?? [];
-      state.vodStreamsByCat = v?.streamsByCat ?? new Map();
-      state.vodCatalogLoaded = true;
+      state.vodCategories = v.categories ?? [];
+      state.vodStreamsByCat = v.streamsByCat instanceof Map ? v.streamsByCat : new Map();
       vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
-    } catch {
+      state.vodCatalogLoaded = true;
+      nodecastVodCatalogFetchError = null;
+      logVeloraRawMediaCatalogLayoutDebug("vod", state.vodCategories, state.vodStreamsByCat, vodAdminConfig);
+    } catch (err) {
+      nodecastVodCatalogFetchError = err instanceof Error ? err.message : String(err);
+      console.error("[Velora] VOD catalogue fetch failed", err);
       if (state) {
-        state.vodCategories = [];
-        state.vodStreamsByCat = new Map();
-        state.vodCatalogLoaded = true;
-        vodAdminConfig = buildProviderAdminConfig([], new Map());
+        state.vodCatalogLoaded = false;
       }
     } finally {
       setCatalogLoadingVisible(false);
     }
   }
 
-  if (tab === "series" && (!state.seriesCatalogLoaded || countStreamsInMap(state.seriesStreamsByCat) === 0)) {
+  if (tab === "series" && !state.seriesCatalogLoaded) {
     setCatalogLoadingVisible(true, "Chargement des séries…", "series");
+    nodecastSeriesCatalogFetchError = null;
     try {
       const s = await fetchNodecastSeriesCatalog(state.base, sid, state.nodecastAuthHeaders);
       if (!state) return;
-      state.seriesCategories = s?.categories ?? [];
-      state.seriesStreamsByCat = s?.streamsByCat ?? new Map();
-      state.seriesCatalogLoaded = true;
+      state.seriesCategories = s.categories ?? [];
+      state.seriesStreamsByCat = s.streamsByCat instanceof Map ? s.streamsByCat : new Map();
       seriesAdminConfig = buildProviderAdminConfig(state.seriesCategories, state.seriesStreamsByCat);
-    } catch {
+      state.seriesCatalogLoaded = true;
+      nodecastSeriesCatalogFetchError = null;
+      logVeloraRawMediaCatalogLayoutDebug(
+        "series",
+        state.seriesCategories,
+        state.seriesStreamsByCat,
+        seriesAdminConfig
+      );
+    } catch (err) {
+      nodecastSeriesCatalogFetchError = err instanceof Error ? err.message : String(err);
+      console.error("[Velora] Series catalogue fetch failed", err);
       if (state) {
-        state.seriesCategories = [];
-        state.seriesStreamsByCat = new Map();
-        state.seriesCatalogLoaded = true;
-        seriesAdminConfig = buildProviderAdminConfig([], new Map());
+        state.seriesCatalogLoaded = false;
       }
     } finally {
       setCatalogLoadingVisible(false);
@@ -6099,6 +6434,13 @@ async function ensureNodecastVodOrSeriesCatalogReady(tab: "movies" | "series"): 
 }
 
 async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<void> {
+  if (isVeloraCatalogCacheDebugEnabled()) {
+    console.info("[Velora] Tab switch (media shell start)", {
+      requestedTab: tab,
+      selectedCountryBefore: selectedAdminCountryId,
+      activeTabBefore: uiTab,
+    });
+  }
   if (!state || state.mode !== "nodecast") {
     showVodPlaceholder(tab, "no-nodecast");
     return;
@@ -6114,7 +6456,8 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
   if (!state) return;
   const map = tab === "movies" ? state.vodStreamsByCat : state.seriesStreamsByCat;
   if (countStreamsInMap(map) === 0) {
-    showVodPlaceholder(tab, "empty");
+    const fetchErr = tab === "movies" ? nodecastVodCatalogFetchError : nodecastSeriesCatalogFetchError;
+    showVodPlaceholder(tab, fetchErr ? "catalog-fetch-error" : "empty");
     return;
   }
   activeStreamId = null;
@@ -6140,17 +6483,48 @@ async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<vo
   syncPlayerDismissOverlay();
   syncMainInPackageClass();
   schedulePersistVeloraUiRoute();
+  if (isVeloraCatalogCacheDebugEnabled()) {
+    console.info("[Velora] Tab switch (media shell done)", {
+      selectedCountryAfter: selectedAdminCountryId,
+      activeTab: uiTab,
+      packagesFoundForSelectedCountry: packagesForSelectedCountry().length,
+    });
+  }
 }
 
 function onTabClick(tab: UiTab): void {
   if (tab === "live") {
+    if (isVeloraCatalogCacheDebugEnabled()) {
+      console.info("[Velora] Tab switch", {
+        phase: "before",
+        tab,
+        selectedCountry: selectedAdminCountryId,
+        activeTab: uiTab,
+      });
+    }
     vodMovieUiPhase = "list";
     vodDetailStream = null;
     seriesUiPhase = "list";
     seriesDetailStream = null;
     destroyVodPlayer();
     goLiveHome();
+    if (isVeloraCatalogCacheDebugEnabled()) {
+      console.info("[Velora] Tab switch", {
+        phase: "after",
+        tab: uiTab,
+        selectedCountry: selectedAdminCountryId,
+        packagesFoundForSelectedCountry: packagesForSelectedCountry().length,
+      });
+    }
     return;
+  }
+  if (isVeloraCatalogCacheDebugEnabled()) {
+    console.info("[Velora] Tab switch", {
+      phase: "before",
+      tab,
+      selectedCountry: selectedAdminCountryId,
+      activeTab: uiTab,
+    });
   }
   if (tab === "movies") {
     seriesUiPhase = "list";
@@ -6370,7 +6744,17 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
     adminConfig = buildProviderAdminConfig(nodecast.categories, streamsByCat);
     vodAdminConfig = buildProviderAdminConfig(nodecast.vodCategories, nodecast.vodStreamsByCat);
     seriesAdminConfig = buildProviderAdminConfig(nodecast.seriesCategories, nodecast.seriesStreamsByCat);
+    logVeloraRawMediaCatalogLayoutDebug("vod", nodecast.vodCategories, nodecast.vodStreamsByCat, vodAdminConfig);
+    logVeloraRawMediaCatalogLayoutDebug(
+      "series",
+      nodecast.seriesCategories,
+      nodecast.seriesStreamsByCat,
+      seriesAdminConfig
+    );
     await refreshSupabaseHierarchy();
+
+    nodecastVodCatalogFetchError = null;
+    nodecastSeriesCatalogFetchError = null;
 
     state = {
       mode,

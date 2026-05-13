@@ -12,6 +12,7 @@ export type LiveStream = {
   stream_id: number;
   name: string;
   category_id?: string | number;
+  category_ids?: string[];
   stream_icon?: string;
   epg_channel_id?: string | null;
   direct_source?: string;
@@ -993,6 +994,66 @@ function parseOptionalNumericField(v: unknown): number | undefined {
   return undefined;
 }
 
+function dedupeCategoryIds(ids: Iterable<string>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    const t = id.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+export function normalizeCategoryIdValue(value: unknown): string[] {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return [String(value)];
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    return dedupeCategoryIds(trimmed.split(/[|,]/g));
+  }
+  if (Array.isArray(value)) {
+    return dedupeCategoryIds(value.flatMap((entry) => normalizeCategoryIdValue(entry)));
+  }
+  if (value && typeof value === "object") {
+    const raw = value as Record<string, unknown>;
+    return dedupeCategoryIds(
+      ["id", "category_id", "categoryId", "cat_id"].flatMap((key) =>
+        normalizeCategoryIdValue(raw[key])
+      )
+    );
+  }
+  return [];
+}
+
+export function extractCategoryIdsFromRaw(
+  raw: Record<string, unknown>,
+  defaultCategoryId?: string
+): string[] {
+  const categoryFieldOrder = [
+    "category_id",
+    "categoryId",
+    "cat_id",
+    "category",
+    "category_ids",
+    "categoryIds",
+    "categories",
+    "group_id",
+    "groupId",
+    "group",
+    "vod_category_id",
+    "series_category_id",
+    "source_id",
+  ] as const;
+  const fromRaw = categoryFieldOrder.flatMap((key) => normalizeCategoryIdValue(raw[key]));
+  const withDefault =
+    fromRaw.length > 0 ? fromRaw : normalizeCategoryIdValue(defaultCategoryId);
+  return dedupeCategoryIds(withDefault);
+}
+
 export function mapNodecastChannelToLiveStream(raw: unknown, index: number): LiveStream | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
@@ -1000,14 +1061,8 @@ export function mapNodecastChannelToLiveStream(raw: unknown, index: number): Liv
   const directSource = extractStreamUrlDeep(c) ?? "";
   if (!name) return null;
 
-  const categoryId = String(
-    c.category_id ??
-      c.group_id ??
-      c.group ??
-      c.category ??
-      c.source_id ??
-      "uncategorized"
-  );
+  const categoryIds = extractCategoryIdsFromRaw(c);
+  const categoryId = categoryIds[0] ?? "uncategorized";
   const numericId = Number(c.stream_id ?? c.id ?? index + 1);
   const iconRaw =
     (typeof c.stream_icon === "string" && c.stream_icon.trim()) ||
@@ -1027,6 +1082,7 @@ export function mapNodecastChannelToLiveStream(raw: unknown, index: number): Liv
     stream_id: Number.isFinite(numericId) ? numericId : index + 1,
     name,
     category_id: categoryId,
+    category_ids: categoryIds.length ? categoryIds : [categoryId],
     stream_icon: iconRaw || undefined,
     direct_source: directSource || undefined,
     container_extension,
@@ -1039,11 +1095,15 @@ export function mapNodecastChannelToLiveStream(raw: unknown, index: number): Liv
 export function groupStreamsByCategory(streams: LiveStream[]): Map<string, LiveStream[]> {
   const map = new Map<string, LiveStream[]>();
   for (const s of streams) {
-    const cid = s.category_id != null ? String(s.category_id) : "";
-    if (!cid) continue;
-    const list = map.get(cid);
-    if (list) list.push(s);
-    else map.set(cid, [s]);
+    const categoryIds =
+      s.category_ids?.length
+        ? dedupeCategoryIds(s.category_ids)
+        : normalizeCategoryIdValue(s.category_id);
+    for (const cid of categoryIds) {
+      const list = map.get(cid);
+      if (list) list.push(s);
+      else map.set(cid, [s]);
+    }
   }
   return map;
 }
@@ -1051,13 +1111,19 @@ export function groupStreamsByCategory(streams: LiveStream[]): Map<string, LiveS
 function categoriesFromStreams(streams: LiveStream[]): LiveCategory[] {
   const seen = new Map<string, LiveCategory>();
   for (const s of streams) {
-    const cid = String(s.category_id ?? "uncategorized");
-    if (!seen.has(cid)) {
-      seen.set(cid, {
-        category_id: cid,
-        category_name: cid === "uncategorized" ? "Other" : cid,
-        parent_id: 0,
-      });
+    const categoryIds =
+      s.category_ids?.length
+        ? dedupeCategoryIds(s.category_ids)
+        : normalizeCategoryIdValue(s.category_id);
+    const ids = categoryIds.length ? categoryIds : ["uncategorized"];
+    for (const cid of ids) {
+      if (!seen.has(cid)) {
+        seen.set(cid, {
+          category_id: cid,
+          category_name: cid === "uncategorized" ? "Other" : cid,
+          parent_id: 0,
+        });
+      }
     }
   }
   return [...seen.values()];
@@ -1154,6 +1220,28 @@ function catalogDebugLog(message: string, detail?: Record<string, unknown>): voi
   if (!isVeloraCatalogCacheDebugEnabled()) return;
   if (detail) console.info("[Velora catalog]", message, detail);
   else console.info("[Velora catalog]", message);
+}
+
+function catalogCategoryFieldPreview(
+  rows: unknown[],
+  fieldNames: readonly string[]
+): Array<Record<string, unknown>> {
+  return rows.slice(0, 20).map((row) => {
+    const raw = row && typeof row === "object" && !Array.isArray(row) ? (row as Record<string, unknown>) : {};
+    const preview: Record<string, unknown> = {};
+    for (const field of fieldNames) {
+      preview[field] = raw[field];
+    }
+    return preview;
+  });
+}
+
+function streamsByCategoryPreview(
+  streamsByCat: Map<string, LiveStream[]>
+): Array<{ categoryId: string; itemCount: number }> {
+  return [...streamsByCat.entries()]
+    .slice(0, 30)
+    .map(([categoryId, items]) => ({ categoryId, itemCount: items.length }));
 }
 
 /** Nodecast / Xtream proxy often returns `{ "error": "Unknown action" }` with HTTP 200. */
@@ -1278,16 +1366,8 @@ function mapNodecastSeriesToStream(
   ).trim();
   if (!name) return null;
   const seriesId = numericXtreamSeriesId(c, index);
-  const catRaw = c.category_id ?? c.category_ids;
-  let categoryId: string;
-  if (Array.isArray(catRaw) && catRaw.length) {
-    categoryId = String(catRaw[0]).trim();
-  } else if (catRaw != null && String(catRaw).trim() !== "") {
-    categoryId = String(catRaw).trim();
-  } else {
-    const d = defaultCategoryId?.trim();
-    categoryId = d && d.length > 0 ? d : "uncategorized";
-  }
+  const categoryIds = extractCategoryIdsFromRaw(c, defaultCategoryId);
+  const categoryId = categoryIds[0] ?? "uncategorized";
   const iconRaw =
     (typeof c.cover === "string" && c.cover.trim()) ||
     (typeof c.stream_icon === "string" && c.stream_icon.trim()) ||
@@ -1297,6 +1377,7 @@ function mapNodecastSeriesToStream(
     stream_id: Number.isFinite(seriesId) ? seriesId : index + 1,
     name,
     category_id: categoryId,
+    category_ids: categoryIds.length ? categoryIds : [categoryId],
     stream_icon: iconRaw || undefined,
     nodecast_source_id: sourceId,
     nodecast_media: "series",
@@ -1308,7 +1389,7 @@ export async function fetchNodecastVodCatalog(
   base: string,
   sourceId: string,
   headers?: Record<string, string>
-): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> } | null> {
+): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> }> {
   return loadXtreamVodCatalog(base, sourceId, headers);
 }
 
@@ -1317,7 +1398,7 @@ export async function fetchNodecastSeriesCatalog(
   base: string,
   sourceId: string,
   headers?: Record<string, string>
-): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> } | null> {
+): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> }> {
   return loadXtreamSeriesCatalog(base, sourceId, headers);
 }
 
@@ -1325,59 +1406,85 @@ async function loadXtreamVodCatalog(
   base: string,
   sourceId: string,
   headers?: Record<string, string>
-): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> } | null> {
-  try {
-    const [catPayload, streamPayload] = await Promise.all([
-      fetchProxiedJsonWithInit<unknown>(
-        `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/vod_categories`,
-        { headers }
-      ),
-      fetchProxiedJsonWithInit<unknown>(
-        `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/vod_streams`,
-        { headers }
-      ),
-    ]);
-    const mappedStreams = asArray(streamPayload)
-      .map((item, idx) => mapNodecastChannelToLiveStream(item, idx))
-      .filter((s): s is LiveStream => s != null)
-      .map((s) => ({
-        ...s,
-        nodecast_source_id: sourceId,
-        nodecast_media: "vod" as const,
-      }));
-    if (!mappedStreams.length) return null;
-    const mappedCats = asArray(catPayload)
-      .map(mapXtreamCategoryRow)
-      .filter((c): c is LiveCategory => c != null);
-    const categories = mappedCats.length ? mappedCats : categoriesFromStreams(mappedStreams);
-    const streamsByCat = groupStreamsByCategory(mappedStreams);
-    return { categories, streamsByCat };
-  } catch {
-    return null;
+): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> }> {
+  const [catPayload, streamPayload] = await Promise.all([
+    fetchProxiedJsonWithInit<unknown>(
+      `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/vod_categories`,
+      { headers }
+    ),
+    fetchProxiedJsonWithInit<unknown>(
+      `${base}/api/proxy/xtream/${encodeURIComponent(sourceId)}/vod_streams`,
+      { headers }
+    ),
+  ]);
+  if (xtreamProxyJsonLooksRejected(catPayload) || xtreamProxyJsonLooksRejected(streamPayload)) {
+    throw new Error("Xtream proxy rejected VOD catalogue response");
   }
+  const rawCategories = asArray(catPayload);
+  const rawStreams = asArray(streamPayload);
+  const mappedStreams = rawStreams
+    .map((item, idx) => mapNodecastChannelToLiveStream(item, idx))
+    .filter((s): s is LiveStream => s != null)
+    .map((s) => ({
+      ...s,
+      nodecast_source_id: sourceId,
+      nodecast_media: "vod" as const,
+    }));
+  const mappedCats = rawCategories
+    .map(mapXtreamCategoryRow)
+    .filter((c): c is LiveCategory => c != null);
+  const categories = mappedCats.length
+    ? mappedCats
+    : mappedStreams.length
+      ? categoriesFromStreams(mappedStreams)
+      : [];
+  const streamsByCat = groupStreamsByCategory(mappedStreams);
+  catalogDebugLog("VOD raw/group debug", {
+    raw_vod_categories_count: rawCategories.length,
+    raw_vod_streams_count: rawStreams.length,
+    raw_vod_streams_category_fields_first_20: catalogCategoryFieldPreview(rawStreams, [
+      "category_id",
+      "categoryId",
+      "cat_id",
+      "category",
+      "category_ids",
+      "categoryIds",
+      "categories",
+      "vod_category_id",
+    ]),
+    vodStreamsByCat_size: streamsByCat.size,
+    vodStreamsByCat_first_30_category_ids_with_item_counts: streamsByCategoryPreview(streamsByCat),
+    vod_categories_with_0_items_count: categories.filter(
+      (category) => (streamsByCat.get(String(category.category_id))?.length ?? 0) === 0
+    ).length,
+  });
+  return { categories, streamsByCat };
 }
 
 async function loadXtreamSeriesCatalog(
   base: string,
   sourceId: string,
   headers?: Record<string, string>
-): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> } | null> {
+): Promise<{ categories: LiveCategory[]; streamsByCat: Map<string, LiveStream[]> }> {
   const sid = encodeURIComponent(sourceId);
   const root = `${base}/api/proxy/xtream/${sid}`;
   let seriesCats: LiveCategory[] = [];
+  let rawSeriesCategoryRows: unknown[] = [];
+  const rawSeriesRowsForDebug: unknown[] = [];
   try {
     const catPayload = await fetchProxiedJsonWithInit<unknown>(`${root}/series_categories`, {
       headers,
     });
-    seriesCats = asArray(catPayload)
+    rawSeriesCategoryRows = asArray(catPayload);
+    seriesCats = rawSeriesCategoryRows
       .map(mapXtreamCategoryRow)
       .filter((c): c is LiveCategory => c != null);
   } catch {
     /* categories optional if get_series returns all */
   }
 
-  const mapChunk = (payload: unknown, defaultCat?: string): LiveStream[] =>
-    seriesListFromPayload(payload)
+  const mapChunk = (rows: unknown[], defaultCat?: string): LiveStream[] =>
+    rows
       .map((item, idx) => mapNodecastSeriesToStream(item, idx, sourceId, defaultCat))
       .filter((s): s is LiveStream => s != null);
 
@@ -1413,8 +1520,10 @@ async function loadXtreamSeriesCatalog(
   for (const url of bulkSeriesUrls()) {
     try {
       const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
-      const chunk = mapChunk(payload);
+      const rawRows = seriesListFromPayload(payload);
+      const chunk = mapChunk(rawRows);
       if (chunk.length) {
+        rawSeriesRowsForDebug.push(...rawRows);
         allSeries = chunk;
         break;
       }
@@ -1428,8 +1537,10 @@ async function loadXtreamSeriesCatalog(
       for (const url of seriesUrlsForCategory(cat.category_id)) {
         try {
           const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
-          const chunk = mapChunk(payload, cat.category_id);
+          const rawRows = seriesListFromPayload(payload);
+          const chunk = mapChunk(rawRows, cat.category_id);
           if (chunk.length) {
+            rawSeriesRowsForDebug.push(...rawRows);
             allSeries.push(...chunk);
             break;
           }
@@ -1443,10 +1554,29 @@ async function loadXtreamSeriesCatalog(
   if (!allSeries.length) {
     const fromFavorites = await loadSeriesCatalogFromFavoritesApi(base, sourceId, headers);
     if (fromFavorites) return fromFavorites;
-    return null;
+    return { categories: seriesCats, streamsByCat: new Map() };
   }
   const categories = seriesCats.length ? seriesCats : categoriesFromStreams(allSeries);
   const streamsByCat = groupStreamsByCategory(allSeries);
+  catalogDebugLog("Series raw/group debug", {
+    raw_series_categories_count: rawSeriesCategoryRows.length,
+    raw_series_count: rawSeriesRowsForDebug.length,
+    raw_series_category_fields_first_20: catalogCategoryFieldPreview(rawSeriesRowsForDebug, [
+      "category_id",
+      "categoryId",
+      "cat_id",
+      "category",
+      "category_ids",
+      "categoryIds",
+      "categories",
+      "series_category_id",
+    ]),
+    seriesStreamsByCat_size: streamsByCat.size,
+    seriesStreamsByCat_first_30_category_ids_with_item_counts: streamsByCategoryPreview(streamsByCat),
+    series_categories_with_0_items_count: categories.filter(
+      (category) => (streamsByCat.get(String(category.category_id))?.length ?? 0) === 0
+    ).length,
+  });
   return { categories, streamsByCat };
 }
 

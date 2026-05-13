@@ -14,6 +14,7 @@ import {
   schedulePutCatalogToR2,
   tryGetCatalogFromR2,
 } from "./api/r2CatalogCacheShared";
+import { isXtreamLiveCatalogR2CacheTarget } from "./api/catalogProxyPolicyShared";
 import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
 import { handleTrialIncrement, handleTrialStatus } from "./api/trialShared";
 import {
@@ -36,38 +37,6 @@ const upstreamSession = {
   /** `http://host/hls/<token>/` → last successful playlist URL for that token */
   lastM3u8ByHlsDir: new Map<string, string>(),
 };
-
-function isCatalogApiTarget(targetUrl: string): boolean {
-  try {
-    const u = new URL(targetUrl);
-    const p = u.pathname.toLowerCase();
-    if (
-      p.endsWith("/api/channels") ||
-      p.endsWith("/api/live/channels") ||
-      p.endsWith("/api/content/live") ||
-      p.endsWith("/api/streams/live") ||
-      p.endsWith("/api/tv/channels") ||
-      p.endsWith("/api/content/channels") ||
-      p.endsWith("/api/live")
-    ) {
-      return true;
-    }
-    if (!p.includes("/api/proxy/xtream/")) return false;
-    return (
-      p.endsWith("/live_categories") ||
-      p.endsWith("/live_streams") ||
-      p.endsWith("/vod_categories") ||
-      p.endsWith("/vod_streams") ||
-      p.endsWith("/series_categories") ||
-      p.endsWith("/series") ||
-      p.endsWith("/get_series") ||
-      p.endsWith("/player_api") ||
-      p.endsWith("/player_api.php")
-    );
-  } catch {
-    return false;
-  }
-}
 
 function isHttpUrl(s: string): boolean {
   try {
@@ -470,7 +439,7 @@ function proxyMiddleware(mode: string) {
       q,
       from
     );
-    const cacheableCatalogRequest = method === "GET" && isCatalogApiTarget(q);
+    const cacheableCatalogRequest = method === "GET" && isXtreamLiveCatalogR2CacheTarget(q);
     if (cacheableCatalogRequest && isR2CatalogCacheConfigured(env)) {
       const r2Hit = await tryGetCatalogFromR2(env, q);
       if (r2Hit?.body.length) {

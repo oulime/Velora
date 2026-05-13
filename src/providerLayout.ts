@@ -1,6 +1,6 @@
 /**
  * Build in-memory country › « package » layout from the provider catalogue:
- * each live category is a grid card; country is inferred from titles; zones
+ * each live / VOD / series category is a grid card; country is inferred from titles; zones
  * `|AR|`, `|AF|`, … viennent des clés dans `canonical_countries` / RAW (ex. clé `ar` → « Arabe »).
  */
 
@@ -199,6 +199,9 @@ export function inferCountryFromCategoryName(name: string): ParsedCountry | null
     const code = pipe[1].toUpperCase();
     return matchCanonicalCountry(countryLabelFromCode(code));
   }
+
+  const fromFullPlain = matchCanonicalCountry(t);
+  if (fromFullPlain) return fromFullPlain;
 
   const fromTrail = inferFromTrailingRegionBracket(t);
   if (fromTrail) return fromTrail;

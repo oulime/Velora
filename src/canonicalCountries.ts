@@ -12,7 +12,7 @@ export function normalizeCountryKey(s: string): string {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -105,8 +105,15 @@ spain|Espagne
 italy|Italie
 portugal|Portugal
 netherlands|Pays-Bas
+pays bas|Pays-Bas
 holland|Pays-Bas
 belgium|Belgique
+allemagne|Allemagne
+espagne|Espagne
+italie|Italie
+maroc|Maroc
+belgique|Belgique
+grece|Grèce
 switzerland|Suisse
 austria|Autriche
 poland|Pologne
@@ -304,9 +311,20 @@ function buildBundledRows(): Row[] {
   return sortRowsForMatch([...seen.values()]);
 }
 
-/** When non-null and non-empty, matching uses only these rows (Supabase). Otherwise bundled list. */
+/** Supabase canonical rows (sorted longest-key first); merged at read time with bundled defaults. */
 let dbRowsSorted: Row[] | null = null;
 let bundledCache: Row[] | null = null;
+
+function mergeDbRowsWithBundledRows(dbRows: Row[], bundled: Row[]): Row[] {
+  const byKey = new Map<string, Row>();
+  for (const row of bundled) {
+    byKey.set(row.key, row);
+  }
+  for (const row of dbRows) {
+    byKey.set(row.key, row);
+  }
+  return sortRowsForMatch([...byKey.values()]);
+}
 
 export function setCanonicalCountriesFromDatabase(
   rows: ReadonlyArray<{ id: string; match_key: string; display_name: string }> | null
@@ -315,22 +333,31 @@ export function setCanonicalCountriesFromDatabase(
     dbRowsSorted = null;
     return;
   }
-  const mapped: Row[] = [];
-  const seenKeys = new Set<string>();
+  const byKey = new Map<string, Row>();
   for (const r of rows) {
-    const key = normalizeCountryKey(r.match_key);
-    if (!key || seenKeys.has(key)) continue;
-    seenKeys.add(key);
-    const name = (r.display_name ?? "").trim() || key;
-    mapped.push({ key, id: r.id, name });
+    const nameRaw = (r.display_name ?? "").trim();
+    const mkKey = normalizeCountryKey(r.match_key);
+    const dnKey = normalizeCountryKey(nameRaw);
+    const name = nameRaw || mkKey || dnKey;
+    const keys: string[] = [];
+    if (mkKey) keys.push(mkKey);
+    if (dnKey && dnKey !== mkKey) keys.push(dnKey);
+    if (!keys.length) continue;
+    for (const key of keys) {
+      if (!key) continue;
+      byKey.set(key, { key, id: r.id, name: name || key });
+    }
   }
-  dbRowsSorted = mapped.length ? sortRowsForMatch(mapped) : null;
+  dbRowsSorted = byKey.size ? sortRowsForMatch([...byKey.values()]) : null;
 }
 
 function rows(): Row[] {
-  if (dbRowsSorted && dbRowsSorted.length > 0) return dbRowsSorted;
-  if (!bundledCache) bundledCache = buildBundledRows();
-  return bundledCache;
+  const bundled = bundledCache ?? buildBundledRows();
+  if (!bundledCache) bundledCache = bundled;
+
+  if (!dbRowsSorted || dbRowsSorted.length === 0) return bundled;
+
+  return mergeDbRowsWithBundledRows(dbRowsSorted, bundled);
 }
 
 /** Longest-prefix match on normalized + noise-stripped title → one canonical country, or null → Autres. */

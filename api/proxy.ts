@@ -15,6 +15,7 @@ import {
   schedulePutCatalogToR2,
   tryGetCatalogFromR2,
 } from "./r2CatalogCacheShared.js";
+import { isXtreamLiveCatalogR2CacheTarget } from "./catalogProxyPolicyShared.js";
 import { ensureProxyTrialAllowsRequest } from "./proxyTrialGate.js";
 
 const PROXY_PREFIX = (process.env.VITE_PROXY_PREFIX ?? "/proxy").replace(/\/$/, "");
@@ -293,38 +294,6 @@ function applyMediaCachingHeaders(
   }
 }
 
-function isCatalogApiTarget(targetUrl: string): boolean {
-  try {
-    const u = new URL(targetUrl);
-    const p = u.pathname.toLowerCase();
-    if (
-      p.endsWith("/api/channels") ||
-      p.endsWith("/api/live/channels") ||
-      p.endsWith("/api/content/live") ||
-      p.endsWith("/api/streams/live") ||
-      p.endsWith("/api/tv/channels") ||
-      p.endsWith("/api/content/channels") ||
-      p.endsWith("/api/live")
-    ) {
-      return true;
-    }
-    if (!p.includes("/api/proxy/xtream/")) return false;
-    return (
-      p.endsWith("/live_categories") ||
-      p.endsWith("/live_streams") ||
-      p.endsWith("/vod_categories") ||
-      p.endsWith("/vod_streams") ||
-      p.endsWith("/series_categories") ||
-      p.endsWith("/series") ||
-      p.endsWith("/get_series") ||
-      p.endsWith("/player_api") ||
-      p.endsWith("/player_api.php")
-    );
-  } catch {
-    return false;
-  }
-}
-
 function applyCatalogCachingHeaders(
   req: VercelRequest,
   res: VercelResponse,
@@ -333,7 +302,7 @@ function applyCatalogCachingHeaders(
 ): void {
   if ((req.method ?? "GET").toUpperCase() !== "GET") return;
   if (!upstream.ok) return;
-  if (!isCatalogApiTarget(targetUrl)) return;
+  if (!isXtreamLiveCatalogR2CacheTarget(targetUrl)) return;
   // Shared edge cache on Vercel for 10 min; browser still revalidates.
   res.setHeader("Cache-Control", "public, max-age=0, s-maxage=600, stale-while-revalidate=60");
 }
@@ -468,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     abortMs = Math.min(defaultUpstreamMs, streamProbeCapMs);
   }
   const catalogR2Eligible =
-    method === "GET" && requestBody === undefined && isCatalogApiTarget(target);
+    method === "GET" && requestBody === undefined && isXtreamLiveCatalogR2CacheTarget(target);
 
   const t = setTimeout(() => ac.abort(), abortMs);
   try {
