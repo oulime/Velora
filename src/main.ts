@@ -5052,6 +5052,8 @@ function isNearlySquarePackageArt(nw: number, nh: number): boolean {
 
 function wirePackageCardArtFit(img: HTMLImageElement): void {
   img.classList.add("vel-package-card__art");
+  img.loading = "lazy";
+  img.decoding = "async";
   const apply = (): void => {
     img.classList.remove("vel-package-card__art--cover", "vel-package-card__art--contain");
     img.classList.add(
@@ -6628,6 +6630,40 @@ async function warmSelectedCountryCatalogs(): Promise<void> {
   }
 }
 
+async function warmSelectedCountryLiveCatalog(): Promise<void> {
+  if (!state || state.mode !== "nodecast") return;
+  const selectedName = selectedCountryDisplayName();
+  setCatalogLoadingVisible(
+    true,
+    selectedName ? `Chargement de ${selectedName}...` : "Chargement du pays...",
+    "live"
+  );
+  try {
+    await ensureSelectedCountryLiveCatalogReady();
+    populateCountrySelectFromAdmin();
+  } finally {
+    setCatalogLoadingVisible(false);
+  }
+}
+
+function warmSelectedCountryMediaCatalogsInBackground(): void {
+  void (async () => {
+    try {
+      await Promise.all([
+        ensureNodecastVodOrSeriesCatalogReady("movies", { showLoading: false }),
+        ensureNodecastVodOrSeriesCatalogReady("series", { showLoading: false }),
+      ]);
+      populateCountrySelectFromAdmin();
+      if (state && uiShell === "packages" && (uiTab === "movies" || uiTab === "series")) {
+        schedulePackagesGridRender();
+        syncPlayerDismissOverlay();
+      }
+    } catch (err) {
+      console.warn("[Velora] Background media warm-up failed", err);
+    }
+  })();
+}
+
 function selectedCountryMediaSlicesLoaded(tab: "movies" | "series"): boolean {
   if (!state || state.mode !== "nodecast") return false;
   const categories = tab === "movies" ? state.vodCategories : state.seriesCategories;
@@ -6982,7 +7018,7 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
       seriesCatalogLoaded: false,
     };
 
-    await warmSelectedCountryCatalogs();
+    await warmSelectedCountryLiveCatalog();
 
     selectedPillId = "all";
     activeStreamId = null;
@@ -6994,6 +7030,7 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
       skipMediaTabRestore: Boolean(opts?.skipMediaRouteRestore),
     });
     if (!routeOk) goLiveHome();
+    warmSelectedCountryMediaCatalogsInBackground();
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
     ensureVeloraHistoryRootMarker();
@@ -7092,7 +7129,12 @@ function onCountryChange(): void {
     if (!merged.some((p) => p.id === uiAdminPackageId)) {
       showPackagesShell();
       void (async () => {
-        await warmSelectedCountryCatalogs();
+        if (uiTab === "live") {
+          await warmSelectedCountryLiveCatalog();
+          warmSelectedCountryMediaCatalogsInBackground();
+        } else {
+          await warmSelectedCountryCatalogs();
+        }
         if (state && uiAdminPackageId == null) {
           schedulePackagesGridRender();
           syncPlayerDismissOverlay();
@@ -7111,7 +7153,12 @@ function onCountryChange(): void {
 
   if (uiShell === "packages") {
     void (async () => {
-      await warmSelectedCountryCatalogs();
+      if (uiTab === "live") {
+        await warmSelectedCountryLiveCatalog();
+        warmSelectedCountryMediaCatalogsInBackground();
+      } else {
+        await warmSelectedCountryCatalogs();
+      }
       if (state && uiShell === "packages") {
         schedulePackagesGridRender();
         syncPlayerDismissOverlay();

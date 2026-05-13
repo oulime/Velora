@@ -73,6 +73,18 @@ export type CatalogJsonResponseHeadersSink = {
   removeHeader(name: string): void;
 };
 
+export function catalogBrowserCacheMaxAgeSeconds(
+  env: Record<string, string | undefined | boolean | number>
+): number {
+  const raw =
+    env.CATALOG_BROWSER_CACHE_MAX_AGE_SECONDS ??
+    env.VITE_CATALOG_BROWSER_CACHE_TTL_SECONDS ??
+    60;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(Math.max(Math.round(n), 0), 3600);
+}
+
 /**
  * Xtream catalog list JSON: never cache at browser or edge; no validators on the wire.
  * Used for live_categories, live_streams, vod_*, series_* (see isXtreamFrontendCatalogJsonTarget).

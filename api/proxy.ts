@@ -16,6 +16,7 @@ import {
   tryGetCatalogFromR2,
 } from "./r2CatalogCacheShared.js";
 import {
+  catalogBrowserCacheMaxAgeSeconds,
   isCatalogJsonCacheDisabledByEnv,
   isXtreamLiveCatalogR2CacheTarget,
 } from "./catalogProxyPolicyShared.js";
@@ -307,8 +308,11 @@ function applyCatalogCachingHeaders(
   if (!upstream.ok) return;
   if (isCatalogJsonCacheDisabledByEnv(process.env)) return;
   if (!isXtreamLiveCatalogR2CacheTarget(targetUrl)) return;
-  // Shared edge cache on Vercel for 10 min; browser still revalidates.
-  res.setHeader("Cache-Control", "public, max-age=0, s-maxage=600, stale-while-revalidate=60");
+  const browserMaxAge = catalogBrowserCacheMaxAgeSeconds(process.env);
+  res.setHeader(
+    "Cache-Control",
+    `public, max-age=${browserMaxAge}, s-maxage=600, stale-while-revalidate=60`
+  );
 }
 
 function etagForCachedCatalog(buf: Buffer, upstreamEtag?: string | null): string {
@@ -453,9 +457,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       if (r2Hit?.body.length) {
         res.status(200);
         if (r2Hit.contentType) res.setHeader("Content-Type", r2Hit.contentType);
+        const browserMaxAge = catalogBrowserCacheMaxAgeSeconds(process.env);
         res.setHeader(
           "Cache-Control",
-          "public, max-age=0, s-maxage=600, stale-while-revalidate=60"
+          `public, max-age=${browserMaxAge}, s-maxage=600, stale-while-revalidate=60`
         );
         res.setHeader("ETag", r2Hit.etag);
         res.setHeader("X-Velora-Proxy-Catalog-Cache", "HIT-R2");

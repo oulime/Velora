@@ -15,6 +15,7 @@ import {
   tryGetCatalogFromR2,
 } from "./api/r2CatalogCacheShared";
 import {
+  catalogBrowserCacheMaxAgeSeconds,
   isCatalogJsonCacheDisabledByEnv,
   isXtreamLiveCatalogR2CacheTarget,
 } from "./api/catalogProxyPolicyShared";
@@ -452,6 +453,10 @@ function proxyMiddleware(mode: string) {
         res.statusCode = 200;
         if (r2Hit.contentType) res.setHeader("Content-Type", r2Hit.contentType);
         if (r2Hit.etag) res.setHeader("ETag", r2Hit.etag);
+        res.setHeader(
+          "Cache-Control",
+          `public, max-age=${catalogBrowserCacheMaxAgeSeconds(env)}, s-maxage=600, stale-while-revalidate=60`
+        );
         res.setHeader("X-Proxy-Cache", "HIT-R2");
         res.end(r2Hit.body);
         return;
@@ -622,6 +627,10 @@ function proxyMiddleware(mode: string) {
         copyUpstreamHeadersToClient(upstream, res);
         if (contentType) res.setHeader("Content-Type", contentType);
         schedulePutCatalogToR2(env, q, buf, contentType, upstream.headers.get("etag"));
+        res.setHeader(
+          "Cache-Control",
+          `public, max-age=${catalogBrowserCacheMaxAgeSeconds(env)}, s-maxage=600, stale-while-revalidate=60`
+        );
         res.setHeader(
           "X-Proxy-Cache",
           isR2CatalogCacheConfigured(env) ? "MISS-R2" : "MISS"

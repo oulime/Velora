@@ -1517,6 +1517,41 @@ function xtreamSeriesUrlsForCategory(root: string, categoryId: string): string[]
   ];
 }
 
+const CATEGORY_STREAM_FETCH_CONCURRENCY = 6;
+
+function uniqueNonEmptyCategoryIds(categoryIds: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of categoryIds) {
+    const id = String(raw).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function loadCategoryChunksInParallel(
+  categoryIds: readonly string[],
+  loadOne: (categoryId: string) => Promise<LiveStream[]>
+): Promise<LiveStream[]> {
+  const ids = uniqueNonEmptyCategoryIds(categoryIds);
+  const chunks: LiveStream[][] = new Array(ids.length);
+  let next = 0;
+  const workerCount = Math.min(CATEGORY_STREAM_FETCH_CONCURRENCY, ids.length);
+
+  async function worker(): Promise<void> {
+    while (next < ids.length) {
+      const index = next;
+      next += 1;
+      chunks[index] = await loadOne(ids[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return chunks.flat();
+}
+
 export async function fetchNodecastVodStreamsForCategories(
   base: string,
   sourceId: string,
@@ -1525,11 +1560,7 @@ export async function fetchNodecastVodStreamsForCategories(
 ): Promise<Map<string, LiveStream[]>> {
   const sid = encodeURIComponent(sourceId);
   const root = `${base}/api/proxy/xtream/${sid}`;
-  const out: LiveStream[] = [];
-  const seen = new Set<string>();
-  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
-    if (seen.has(categoryId)) continue;
-    seen.add(categoryId);
+  const out = await loadCategoryChunksInParallel(categoryIds, async (categoryId) => {
     for (const url of xtreamVodUrlsForCategory(root, categoryId)) {
       try {
         const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
@@ -1544,14 +1575,14 @@ export async function fetchNodecastVodStreamsForCategories(
             nodecast_media: "vod" as const,
           }));
         if (chunk.length) {
-          out.push(...chunk);
-          break;
+          return chunk;
         }
       } catch {
         /* variante suivante */
       }
     }
-  }
+    return [];
+  });
   return groupStreamsByCategory(out);
 }
 
@@ -1563,11 +1594,7 @@ export async function fetchNodecastLiveStreamsForCategories(
 ): Promise<Map<string, LiveStream[]>> {
   const sid = encodeURIComponent(sourceId);
   const root = `${base}/api/proxy/xtream/${sid}`;
-  const out: LiveStream[] = [];
-  const seen = new Set<string>();
-  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
-    if (seen.has(categoryId)) continue;
-    seen.add(categoryId);
+  const out = await loadCategoryChunksInParallel(categoryIds, async (categoryId) => {
     for (const url of xtreamLiveUrlsForCategory(root, categoryId)) {
       try {
         const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
@@ -1582,14 +1609,14 @@ export async function fetchNodecastLiveStreamsForCategories(
             nodecast_media: "live" as const,
           }));
         if (chunk.length) {
-          out.push(...chunk);
-          break;
+          return chunk;
         }
       } catch {
         /* variante suivante */
       }
     }
-  }
+    return [];
+  });
   return groupStreamsByCategory(out);
 }
 
@@ -1601,11 +1628,7 @@ export async function fetchNodecastSeriesStreamsForCategories(
 ): Promise<Map<string, LiveStream[]>> {
   const sid = encodeURIComponent(sourceId);
   const root = `${base}/api/proxy/xtream/${sid}`;
-  const out: LiveStream[] = [];
-  const seen = new Set<string>();
-  for (const categoryId of categoryIds.map((id) => String(id).trim()).filter(Boolean)) {
-    if (seen.has(categoryId)) continue;
-    seen.add(categoryId);
+  const out = await loadCategoryChunksInParallel(categoryIds, async (categoryId) => {
     for (const url of xtreamSeriesUrlsForCategory(root, categoryId)) {
       try {
         const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
@@ -1615,14 +1638,14 @@ export async function fetchNodecastSeriesStreamsForCategories(
           .map((item, idx) => mapNodecastSeriesToStream(item, idx, sourceId, categoryId))
           .filter((s): s is LiveStream => s != null);
         if (chunk.length) {
-          out.push(...chunk);
-          break;
+          return chunk;
         }
       } catch {
         /* variante suivante */
       }
     }
-  }
+    return [];
+  });
   return groupStreamsByCategory(out);
 }
 
