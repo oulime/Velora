@@ -164,6 +164,7 @@ if (elVideoVod) {
   elVideoVod.autoplay = false;
 }
 const elVodPlayerContainer = document.getElementById("vod-player-container") as HTMLElement | null;
+const elVodVideoWrapper = elVideoVod?.closest<HTMLElement>(".video-wrapper") ?? null;
 const elNowPlayingVod = document.getElementById("now-playing-vod") as HTMLDivElement | null;
 const elVodPlayerBuffering = document.getElementById("vod-player-buffering") as HTMLDivElement | null;
 const elVodControlsOverlay = document.getElementById("vod-controls-overlay") as HTMLDivElement | null;
@@ -1065,6 +1066,29 @@ function setVodSeekVisualPercent(percentRaw: number): void {
   elVodCtlSeekTrack.setAttribute("aria-valuenow", String(Math.round(percent * 100)));
 }
 
+function lockDownVodNativeUi(video: HTMLVideoElement): void {
+  video.controls = false;
+  video.removeAttribute("controls");
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.setAttribute("x5-playsinline", "true");
+  video.setAttribute("x5-video-player-type", "h5-page");
+  video.setAttribute("x5-video-player-fullscreen", "false");
+  video.setAttribute("x5-video-orientation", "landscape");
+  video.setAttribute("controlslist", "nofullscreen nodownload noremoteplayback noplaybackrate");
+  video.setAttribute("disablepictureinpicture", "");
+  try {
+    video.disablePictureInPicture = true;
+  } catch {
+    /* ignore unsupported PiP flag */
+  }
+  try {
+    video.disableRemotePlayback = true;
+  } catch {
+    /* ignore unsupported remote playback flag */
+  }
+}
+
 function resetVodTranscodeState(): void {
   currentTranscodeSessionId = null;
   currentVodSourceUrl = null;
@@ -1142,7 +1166,7 @@ function isVodNodecastTranscodeSession(): boolean {
 
 function syncVodControlVisibility(video: HTMLVideoElement): void {
   isVodTranscode = isVodNodecastTranscodeSession();
-  video.controls = false;
+  lockDownVodNativeUi(video);
   if (elVodControlsOverlay) {
     elVodControlsOverlay.classList.remove("hidden");
     elVodControlsOverlay.setAttribute("aria-hidden", "false");
@@ -1521,6 +1545,7 @@ async function seekVodTranscodeTo(video: HTMLVideoElement, targetSeconds: number
 
 function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   teardownVodPlaybackHelpers();
+  lockDownVodNativeUi(video);
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let lastProgressTs = Date.now();
   let lastTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
@@ -1660,6 +1685,7 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   };
 
   const onLoadedData = (): void => {
+    lockDownVodNativeUi(video);
     forceStartLoad();
     updateVodProgressUi(video);
   };
@@ -1853,6 +1879,9 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   video.addEventListener("mousemove", markVodControlsActive);
   video.addEventListener("pointermove", markVodControlsActive);
   video.addEventListener("touchstart", markVodControlsActive, { passive: true });
+  elVodVideoWrapper?.addEventListener("click", toggleVideoPlayPauseVod);
+  elVodVideoWrapper?.addEventListener("pointermove", markVodControlsActive);
+  elVodVideoWrapper?.addEventListener("touchstart", markVodControlsActive, { passive: true });
   elVodControlsOverlay?.addEventListener("pointermove", markVodControlsActive);
   document.addEventListener("fullscreenchange", onFullscreenChange);
   const onVolumeChange = (): void => {
@@ -1897,6 +1926,9 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     video.removeEventListener("mousemove", markVodControlsActive);
     video.removeEventListener("pointermove", markVodControlsActive);
     video.removeEventListener("touchstart", markVodControlsActive);
+    elVodVideoWrapper?.removeEventListener("click", toggleVideoPlayPauseVod);
+    elVodVideoWrapper?.removeEventListener("pointermove", markVodControlsActive);
+    elVodVideoWrapper?.removeEventListener("touchstart", markVodControlsActive);
     elVodControlsOverlay?.removeEventListener("pointermove", markVodControlsActive);
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     video.removeEventListener("volumechange", onVolumeChange);
@@ -2574,7 +2606,7 @@ function teardownVodMedia(): void {
   elVideoVod.src = "";
   elVideoVod.removeAttribute("title");
   elVideoVod.load();
-  elVideoVod.controls = false;
+  lockDownVodNativeUi(elVideoVod);
   isVodTranscode = false;
   clearVodManualFullscreen();
   if (elVodControlsOverlay) {
@@ -2747,7 +2779,7 @@ function playVodUrl(url: string, label: string, upstreamAuth?: Record<string, st
   attachNodecastStatusPollingForPlayback();
   elVideoVod.preload = "metadata";
   elVideoVod.crossOrigin = "anonymous";
-  elVideoVod.controls = false;
+  lockDownVodNativeUi(elVideoVod);
   const proxied = proxiedUrl(url);
   applyVodTranscodeSessionMeta(getNodecastTranscodeSessionMeta(url));
   syncVodControlVisibility(elVideoVod);

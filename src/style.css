@@ -3262,6 +3262,9 @@ a.topbar__admin-link {
   display: block;
   object-fit: contain;
   background: #000;
+  pointer-events: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .vod-controls-overlay {
@@ -3437,7 +3440,21 @@ body.vel-vod-fullscreen-active .main--velora {
 #video-vod::-webkit-media-controls-overlay-play-button,
 #video-vod::-webkit-media-controls-start-playback-button,
 #video-vod::-webkit-media-controls-fullscreen-button,
-#video-vod::-webkit-media-controls-picture-in-picture-button {
+#video-vod::-webkit-media-controls-picture-in-picture-button,
+#video-vod::-webkit-media-controls-play-button,
+#video-vod::-webkit-media-controls-mute-button,
+#video-vod::-webkit-media-controls-timeline,
+#video-vod::-webkit-media-controls-timeline-container,
+#video-vod::-webkit-media-controls-current-time-display,
+#video-vod::-webkit-media-controls-time-remaining-display,
+#video-vod::-webkit-media-controls-download-button,
+#video-vod::-webkit-media-controls-volume-slider,
+#video-vod::-webkit-media-controls-volume-control-container,
+#video-vod::-webkit-media-controls-rewind-button,
+#video-vod::-webkit-media-controls-seek-back-button,
+#video-vod::-webkit-media-controls-seek-forward-button,
+#video-vod::-webkit-media-controls-toggle-closed-captions-button,
+#video-vod::-internal-media-controls-download-button {
   display: none !important;
   opacity: 0 !important;
   pointer-events: none !important;
