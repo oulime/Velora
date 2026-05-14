@@ -3431,6 +3431,31 @@ body.vel-vod-fullscreen-active .main--velora {
   overflow: hidden;
 }
 
+#video-vod::-webkit-media-controls,
+#video-vod::-webkit-media-controls-panel,
+#video-vod::-webkit-media-controls-enclosure,
+#video-vod::-webkit-media-controls-overlay-play-button,
+#video-vod::-webkit-media-controls-start-playback-button,
+#video-vod::-webkit-media-controls-fullscreen-button,
+#video-vod::-webkit-media-controls-picture-in-picture-button {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  #vod-player-container.player-container--fullscreen .video-wrapper {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100vh !important;
+    height: 100vw !important;
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center center;
+  }
+}
+
 @media (max-width: 720px) {
   #dynamic-list.item-list.item-list--vod-film-detail .vel-vod-detail__title {
     margin-bottom: 0.55rem;

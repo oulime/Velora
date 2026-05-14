@@ -1007,6 +1007,7 @@ let currentVodAudioCodec: string | undefined;
 let currentVodAudioChannels: number | undefined;
 let vodSeekInFlight = false;
 let isVodTranscode = false;
+let vodManualFullscreenActive = false;
 let isVodTranscodeSeeking = false;
 let suppressNativeSeekingHandler = false;
 let isVodSeekDragging = false;
@@ -1117,7 +1118,7 @@ function updateVodProgressUi(video: HTMLVideoElement): void {
   const baseCurrent = getRealVodCurrentTime(video);
   const displayCurrent =
     optimisticVodTimeSeconds != null ? optimisticVodTimeSeconds : baseCurrent;
-  if (isVodTranscode && elVodCtlCurrent && elVodCtlDuration) {
+  if (elVodCtlCurrent && elVodCtlDuration) {
     elVodCtlCurrent.textContent = formatDurationHms(displayCurrent);
     elVodCtlDuration.textContent = formatDurationHms(realDuration);
     if (!isVodSeekDragging) {
@@ -1141,12 +1142,38 @@ function isVodNodecastTranscodeSession(): boolean {
 
 function syncVodControlVisibility(video: HTMLVideoElement): void {
   isVodTranscode = isVodNodecastTranscodeSession();
-  video.controls = !isVodTranscode;
+  video.controls = false;
   if (elVodControlsOverlay) {
-    elVodControlsOverlay.classList.toggle("hidden", !isVodTranscode);
-    if (!isVodTranscode) elVodControlsOverlay.classList.remove("vod-controls-overlay--idle");
-    elVodControlsOverlay.setAttribute("aria-hidden", isVodTranscode ? "false" : "true");
+    elVodControlsOverlay.classList.remove("hidden");
+    elVodControlsOverlay.setAttribute("aria-hidden", "false");
   }
+}
+
+function lockVodLandscapeOrientation(): void {
+  const orientation = screen.orientation as ScreenOrientation & {
+    lock?: (orientation: "landscape") => Promise<void>;
+  };
+  if (!orientation || typeof orientation.lock !== "function") return;
+  void orientation.lock("landscape").catch(() => {});
+}
+
+function unlockVodLandscapeOrientation(): void {
+  const orientation = screen.orientation as ScreenOrientation & {
+    unlock?: () => void;
+  };
+  if (!orientation || typeof orientation.unlock !== "function") return;
+  try {
+    orientation.unlock();
+  } catch {
+    /* ignore unsupported orientation unlock */
+  }
+}
+
+function clearVodManualFullscreen(): void {
+  vodManualFullscreenActive = false;
+  elVodPlayerContainer?.classList.remove("player-container--fullscreen");
+  document.body.classList.remove("vel-vod-fullscreen-active");
+  unlockVodLandscapeOrientation();
 }
 
 function teardownVodPlaybackHelpers(): void {
@@ -1647,14 +1674,21 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   video.addEventListener("error", onError);
 
   const seekFromPointerEvent = (event: PointerEvent | MouseEvent): void => {
-    if (!isVodTranscode || !elVodCtlSeekTrack) return;
-    if (!currentVodDurationSeconds || !Number.isFinite(currentVodDurationSeconds)) return;
+    if (!elVodCtlSeekTrack) return;
+    const duration = getRealVodDuration(video);
+    if (!duration || !Number.isFinite(duration)) return;
     const rect = elVodCtlSeekTrack.getBoundingClientRect();
     if (!(rect.width > 0)) return;
     const percent = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const targetSeconds = percent * currentVodDurationSeconds;
+    const targetSeconds = percent * duration;
     console.log("[VOD CTRL] pointer percent", percent);
     console.log("[VOD CTRL] targetSeconds", targetSeconds);
+    if (!isVodTranscode) {
+      video.currentTime = targetSeconds;
+      setVodSeekVisualPercent(percent);
+      updateVodProgressUi(video);
+      return;
+    }
     // 1. Move the UI immediately to the clicked position.
     optimisticVodTimeSeconds = targetSeconds;
     setVodSeekVisualPercent(percent);
@@ -1677,8 +1711,9 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     );
   };
   const updateDragPercent = (event: PointerEvent): void => {
-    if (!isVodTranscode || !elVodCtlSeekTrack) return;
-    if (!currentVodDurationSeconds || !Number.isFinite(currentVodDurationSeconds)) return;
+    if (!elVodCtlSeekTrack) return;
+    const duration = getRealVodDuration(video);
+    if (!duration || !Number.isFinite(duration)) return;
     const rect = elVodCtlSeekTrack.getBoundingClientRect();
     if (!(rect.width > 0)) return;
     const percent = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -1718,7 +1753,6 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     elVodCtlSeekTrack.releasePointerCapture?.(event.pointerId);
   };
   const onCtlPlay = (): void => {
-    if (!isVodTranscode) return;
     if (video.paused) {
       if (isTrialBlocked()) {
         showTrialExpiredModal();
@@ -1728,7 +1762,6 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     } else video.pause();
   };
   const onCtlMute = (): void => {
-    if (!isVodTranscode) return;
     video.muted = !video.muted;
     setVodControlIcon(
       elVodCtlMute,
@@ -1736,20 +1769,47 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
       video.muted ? "Unmute" : "Mute"
     );
   };
-  const onCtlFullscreen = (): void => {
-    if (!isVodTranscode) return;
+  const onCtlFullscreen = async (): Promise<void> => {
     const host = elVodPlayerContainer ?? video;
-    if (!document.fullscreenElement) void host.requestFullscreen?.().catch(() => {});
-    else void document.exitFullscreen?.().catch(() => {});
+    const inVodFullscreen = Boolean(
+      (document.fullscreenElement && elVodPlayerContainer && document.fullscreenElement === elVodPlayerContainer) ||
+        vodManualFullscreenActive
+    );
+    if (!inVodFullscreen) {
+      vodManualFullscreenActive = false;
+      try {
+        if (host.requestFullscreen) {
+          await host.requestFullscreen();
+        } else {
+          vodManualFullscreenActive = true;
+        }
+      } catch {
+        vodManualFullscreenActive = true;
+      }
+      if (!document.fullscreenElement && !vodManualFullscreenActive) {
+        vodManualFullscreenActive = true;
+      }
+      lockVodLandscapeOrientation();
+      onFullscreenChange();
+      return;
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen?.().catch(() => {});
+    }
+    clearVodManualFullscreen();
+    onFullscreenChange();
   };
   const onFullscreenChange = (): void => {
     const inFullscreen = Boolean(
-      document.fullscreenElement &&
+      (document.fullscreenElement &&
         elVodPlayerContainer &&
-        document.fullscreenElement === elVodPlayerContainer
+        document.fullscreenElement === elVodPlayerContainer) ||
+        vodManualFullscreenActive
     );
     elVodPlayerContainer?.classList.toggle("player-container--fullscreen", inFullscreen);
     document.body.classList.toggle("vel-vod-fullscreen-active", inFullscreen);
+    if (inFullscreen) lockVodLandscapeOrientation();
+    else clearVodManualFullscreen();
     setVodControlIcon(
       elVodCtlFullscreen,
       inFullscreen ? VOD_CONTROL_ICONS.fullscreenExit : VOD_CONTROL_ICONS.fullscreen,
@@ -1771,7 +1831,7 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   };
   let overlayIdleTimer: number | null = null;
   const markVodControlsActive = (): void => {
-    if (!elVodControlsOverlay || !isVodTranscode) return;
+    if (!elVodControlsOverlay) return;
     elVodControlsOverlay.classList.remove("vod-controls-overlay--idle");
     if (overlayIdleTimer != null) window.clearTimeout(overlayIdleTimer);
     overlayIdleTimer = window.setTimeout(() => {
@@ -2514,8 +2574,9 @@ function teardownVodMedia(): void {
   elVideoVod.src = "";
   elVideoVod.removeAttribute("title");
   elVideoVod.load();
-  elVideoVod.controls = true;
+  elVideoVod.controls = false;
   isVodTranscode = false;
+  clearVodManualFullscreen();
   if (elVodControlsOverlay) {
     elVodControlsOverlay.classList.add("hidden");
     elVodControlsOverlay.setAttribute("aria-hidden", "true");
@@ -2686,7 +2747,7 @@ function playVodUrl(url: string, label: string, upstreamAuth?: Record<string, st
   attachNodecastStatusPollingForPlayback();
   elVideoVod.preload = "metadata";
   elVideoVod.crossOrigin = "anonymous";
-  elVideoVod.controls = true;
+  elVideoVod.controls = false;
   const proxied = proxiedUrl(url);
   applyVodTranscodeSessionMeta(getNodecastTranscodeSessionMeta(url));
   syncVodControlVisibility(elVideoVod);
