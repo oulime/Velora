@@ -267,6 +267,14 @@ const elPlayerContainer = $("#player-container") as HTMLElement;
 const elBtnClosePlayer = document.getElementById("btn-close-player") as HTMLButtonElement | null;
 const elMainTabs = $("#main-tabs") as HTMLElement;
 const elPackagesView = $("#packages-view") as HTMLDivElement;
+const elAdultView = document.getElementById("adult-view") as HTMLDivElement | null;
+const elBtnAdultPortal = document.getElementById("btn-adult-portal") as HTMLButtonElement | null;
+const elAdultTabLive = document.getElementById("adult-tab-live") as HTMLButtonElement | null;
+const elAdultTabMovies = document.getElementById("adult-tab-movies") as HTMLButtonElement | null;
+const elAdultTabHome = document.getElementById("adult-tab-home") as HTMLButtonElement | null;
+const elAdultConfirmDialog = document.getElementById("vel-adult-confirm-dialog") as HTMLDialogElement | null;
+const elAdultConfirmYes = document.getElementById("vel-adult-confirm-yes") as HTMLButtonElement | null;
+const elAdultConfirmNo = document.getElementById("vel-adult-confirm-no") as HTMLButtonElement | null;
 const elContentView = $("#content-view") as HTMLElement;
 const elDynamicList = $("#dynamic-list") as HTMLDivElement;
 const elBtnBackHome = $("#btn-back-home") as HTMLButtonElement;
@@ -296,9 +304,12 @@ let nodecastSeriesCatalogFetchError: string | null = null;
 
 type UiTab = "live" | "movies" | "series";
 type UiShell = "packages" | "content";
+type AdultCatalogTab = "live" | "movies";
 
 let uiTab: UiTab = "live";
 let uiShell: UiShell = "packages";
+let adultPortalMode = false;
+let adultPortalTab: AdultCatalogTab = "live";
 /** When in live TV content view, which admin package (grid card) is open. */
 let uiAdminPackageId: string | null = null;
 /** Selected country in the header (inferred from catalogue keys, e.g. canonical id). */
@@ -323,6 +334,7 @@ function isGlobalAllowlistInjectedPackageId(packageId: string): boolean {
 }
 
 const COUNTRY_STORAGE_KEY = "lumina_selected_country_id";
+const ADULT_ACCESS_SESSION_KEY = "velora_adult_confirmed_v1";
 const PKG_CHANNEL_ORDER_LS_PREFIX = "velora_pkg_ch_order_v1";
 const PKG_GRID_ORDER_LS_PREFIX = "velora_pkg_grid_order_v1";
 /** When `"0"`, hide + / Supabase delete in the grid (admin session only). Default = visible. */
@@ -928,7 +940,9 @@ let hls: Hls | null = null;
 let hlsVod: Hls | null = null;
 let primaryPlaybackKeepAliveCleanup: (() => void) | null = null;
 let nodecastStatusPollingCleanup: (() => void) | null = null;
+let liveStartupUiCleanup: (() => void) | null = null;
 const NODECAST_STATUS_POLL_MS = 3000;
+const NODECAST_STATUS_STARTUP_DELAY_MS = 8000;
 
 /** Match Nodecast transcode (HLS): VLC-style UA in `xhrSetup` (proxy may also set upstream UA). */
 const NODECAST_HLS_USER_AGENT = "VLC/3.0.18 LibVLC/3.0.18";
@@ -1939,17 +1953,276 @@ function setTabsActive(tab: UiTab): void {
   elTabLive.classList.toggle("active", tab === "live");
   elTabMovies.classList.toggle("active", tab === "movies");
   elTabSeries.classList.toggle("active", tab === "series");
+  elAdultTabLive?.classList.toggle("active", adultPortalMode && adultPortalTab === "live");
+  elAdultTabMovies?.classList.toggle("active", adultPortalMode && adultPortalTab === "movies");
 }
 
 /** Marque le shell « dans un bouquet » : le logo VIP suit le thème du package sur `.main`. */
 function syncMainInPackageClass(): void {
   elMain.classList.toggle("main--velora-in-package", uiShell === "content" && uiAdminPackageId != null);
+  elMain.classList.toggle(
+    "main--velora-live-package",
+    uiShell === "content" && uiAdminPackageId != null && uiTab === "live"
+  );
 }
 
 /** Scroll is on `#main` (`.main--velora`), not the window; grid scroll was kept when opening a package. */
 function resetVeloraMainScroll(): void {
   elMain.scrollTop = 0;
   window.scrollTo(0, 0);
+}
+
+function smoothVeloraMainScrollTop(): void {
+  elMain.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function syncAdultPortalChrome(): void {
+  elMain.classList.toggle("main--velora-adult", adultPortalMode);
+  elAdultView?.classList.toggle("hidden", !adultPortalMode || uiShell !== "packages");
+  elBtnAdultPortal?.classList.toggle("active", adultPortalMode);
+  elBtnAdultPortal?.setAttribute("aria-pressed", adultPortalMode ? "true" : "false");
+  elAdultTabLive?.classList.toggle("active", adultPortalMode && adultPortalTab === "live");
+  elAdultTabMovies?.classList.toggle("active", adultPortalMode && adultPortalTab === "movies");
+  elAdultTabHome?.classList.remove("active");
+  elCountrySelect.closest(".vel-header__country")?.classList.toggle("hidden", adultPortalMode);
+  elTabSeries.classList.toggle("hidden", adultPortalMode);
+}
+
+function normalizeAdultMatchText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_|.[\](){}:;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isAdultLabel(value: string | null | undefined): boolean {
+  const t = normalizeAdultMatchText(value ?? "");
+  if (!t) return false;
+  return (
+    /(^|\s)(xxx|xx|adult|adults|adulte|adultes|adulti|erotic|erotique|erotik|porn|porno|sexy|sex|hot|playboy|hustler|dorcel|brazzers|redlight|xvideos)(\s|$)/i.test(t) ||
+    /(^|\s)(18\s*\+|\+18|x\s*rated)(\s|$)/i.test(t)
+  );
+}
+
+function packageCountryLabel(pkg: AdminPackage, layout: AdminConfig): string | null {
+  return (
+    countryNameForIdInLayout(pkg.country_id, layout) ??
+    (isLikelyUuid(pkg.country_id)
+      ? dbAdminCountries.find((c) => c.id === pkg.country_id)?.name.trim() ?? null
+      : null)
+  );
+}
+
+function isAdultPackage(pkg: AdminPackage, layout: AdminConfig, tab?: AdultCatalogTab | UiTab): boolean {
+  void tab;
+  return isAdultLabel(pkg.name) || isAdultLabel(packageCountryLabel(pkg, layout));
+}
+
+function isAdultAccessConfirmed(): boolean {
+  try {
+    return sessionStorage.getItem(ADULT_ACCESS_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function confirmAdultAccess(): Promise<boolean> {
+  if (isAdultAccessConfirmed()) return Promise.resolve(true);
+
+  if (!elAdultConfirmDialog || !elAdultConfirmYes || !elAdultConfirmNo) {
+    const ok = window.confirm("Contenu reserve aux adultes. Confirmez-vous avoir 18 ans ou plus ?");
+    if (ok) {
+      try {
+        sessionStorage.setItem(ADULT_ACCESS_SESSION_KEY, "1");
+      } catch {
+        /* ignore */
+      }
+    }
+    return Promise.resolve(ok);
+  }
+
+  return new Promise((resolve) => {
+    const ac = new AbortController();
+    const { signal } = ac;
+    const done = (ok: boolean) => {
+      if (ok) {
+        try {
+          sessionStorage.setItem(ADULT_ACCESS_SESSION_KEY, "1");
+        } catch {
+          /* ignore */
+        }
+      }
+      elAdultConfirmDialog.close();
+      ac.abort();
+      resolve(ok);
+    };
+    elAdultConfirmYes.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      done(true);
+    }, { signal });
+    elAdultConfirmNo.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      done(false);
+    }, { signal });
+    elAdultConfirmDialog.addEventListener("cancel", (ev) => {
+      ev.preventDefault();
+      done(false);
+    }, { signal });
+    elAdultConfirmDialog.addEventListener("close", () => {
+      ac.abort();
+      resolve(false);
+    }, { once: true });
+    elAdultConfirmDialog.showModal();
+  });
+}
+
+function exitAdultPortalMode(): void {
+  if (!adultPortalMode) return;
+  adultPortalMode = false;
+  syncAdultPortalChrome();
+}
+
+function adultPackagesForTab(tab: AdultCatalogTab): AdminPackage[] {
+  const layout = tab === "movies" ? vodAdminConfig : adminConfig;
+  const byId = new Map<string, AdminPackage>();
+  for (const pkg of layout.packages) {
+    if (isAdultPackage(pkg, layout, tab)) byId.set(pkg.id, pkg);
+  }
+  const globalLines = getGlobalPackageAllowlistLines()
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const line of globalLines) {
+    const nk = normalizeGlobalAllowlistNameKey(line);
+    const exact =
+      layout.packages.find((p) => p.id === line) ??
+      dbAdminPackages.find((p) => p.id === line);
+    if (exact && isAdultPackage(exact, layout, tab)) {
+      byId.set(exact.id, exact);
+      continue;
+    }
+    if (!nk && !isAdultLabel(line)) continue;
+    for (const pkg of layout.packages) {
+      if (normalizeGlobalAllowlistNameKey(pkg.name) === nk || (isAdultLabel(line) && isAdultPackage(pkg, layout, tab))) {
+        if (isAdultPackage(pkg, layout, tab)) byId.set(pkg.id, pkg);
+      }
+    }
+  }
+  if (tab === "live") {
+    for (const pkg of dbAdminPackages) {
+      if (isAdultPackage(pkg, adminConfig, tab)) byId.set(pkg.id, pkg);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
+function adultCategoryIdsForTab(tab: AdultCatalogTab): string[] {
+  if (!state || state.mode !== "nodecast") return [];
+  const categories = tab === "movies" ? state.vodCategories : state.liveCategories;
+  return categories
+    .filter((category) => isAdultLabel(category.category_name))
+    .map((category) => String(category.category_id))
+    .filter(Boolean);
+}
+
+async function ensureAdultCatalogReady(tab: AdultCatalogTab): Promise<void> {
+  if (!state || state.mode !== "nodecast") return;
+  const sid = state.nodecastXtreamSourceId?.trim();
+  if (!sid) return;
+
+  setCatalogLoadingVisible(
+    true,
+    tab === "movies" ? "Chargement des films adultes..." : "Chargement des lives adultes...",
+    tab
+  );
+  try {
+    if (tab === "movies") {
+      nodecastVodCatalogFetchError = null;
+      if (!state.vodCatalogLoaded) {
+        state.vodCategories = await fetchNodecastVodCategories(
+          state.base,
+          sid,
+          state.nodecastAuthHeaders
+        );
+        state.vodCatalogLoaded = true;
+      }
+      const adultCategoryIds = adultCategoryIdsForTab("movies");
+      const missing = adultCategoryIds.filter((categoryId) => !state?.vodLoadedCategoryIds.has(categoryId));
+      if (missing.length > 0) {
+        const streamsByCat = await fetchNodecastVodStreamsForCategories(
+          state.base,
+          sid,
+          missing,
+          state.nodecastAuthHeaders
+        );
+        if (!state) return;
+        mergeStreamsByCategory(state.vodStreamsByCat, streamsByCat);
+        for (const categoryId of missing) state.vodLoadedCategoryIds.add(categoryId);
+      }
+      if (!state) return;
+      vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
+      nodecastVodCatalogFetchError = null;
+      persistVeloraNodecastSnapshot();
+      return;
+    }
+
+    const adultCategoryIds = adultCategoryIdsForTab("live");
+    const missing = adultCategoryIds.filter((categoryId) => !state?.liveLoadedCategoryIds.has(categoryId));
+    if (missing.length > 0) {
+      const streamsByCat = await fetchNodecastLiveStreamsForCategories(
+        state.base,
+        sid,
+        missing,
+        state.nodecastAuthHeaders
+      );
+      if (!state) return;
+      mergeStreamsByCategory(state.streamsByCatAll, streamsByCat);
+      for (const categoryId of missing) state.liveLoadedCategoryIds.add(categoryId);
+    }
+    if (!state) return;
+    adminConfig = buildProviderAdminConfig(state.liveCategories, state.streamsByCatAll);
+    persistVeloraNodecastSnapshot();
+  } catch (err) {
+    if (tab === "movies") {
+      nodecastVodCatalogFetchError = err instanceof Error ? err.message : String(err);
+    }
+    console.error("[Velora] Adult catalogue fetch failed", err);
+  } finally {
+    setCatalogLoadingVisible(false);
+  }
+}
+
+async function showAdultPortal(tab: AdultCatalogTab = adultPortalTab): Promise<void> {
+  if (!(await confirmAdultAccess())) return;
+  activeStreamId = null;
+  destroyPlayer();
+  destroyVodPlayer();
+  adultPortalMode = true;
+  adultPortalTab = tab;
+  uiTab = tab;
+  uiShell = "packages";
+  uiAdminPackageId = null;
+  vodMovieUiPhase = "list";
+  vodDetailStream = null;
+  seriesUiPhase = "list";
+  seriesDetailStream = null;
+  selectedPillId = "all";
+  setTabsActive(uiTab);
+  elPackagesView.classList.remove("hidden");
+  elContentView.classList.add("hidden");
+  elContentView.classList.remove("content-view--vod-film-detail");
+  elDynamicList.classList.remove("item-list--vod-film-detail");
+  elCatPillsWrap.classList.add("hidden");
+  applyPresetTheme("default");
+  syncAdultPortalChrome();
+  await ensureAdultCatalogReady(tab);
+  renderPackagesGrid();
+  syncPlayerDismissOverlay();
+  syncMainInPackageClass();
+  resetVeloraMainScroll();
 }
 
 /** × sur le lecteur : visible seulement sur la grille bouquets (hors package), lecteur affiché. */
@@ -2074,9 +2347,33 @@ function setPlayerBufferingVisible(visible: boolean): void {
   elPlayerBuffering.setAttribute("aria-hidden", visible ? "false" : "true");
 }
 
+function armLiveStartupUi(): void {
+  liveStartupUiCleanup?.();
+  setPlayerBufferingVisible(true);
+  let cleaned = false;
+  const markReady = (): void => {
+    setPlayerBufferingVisible(false);
+    cleanup();
+  };
+  const fallbackTimer = window.setTimeout(markReady, 15_000);
+  function cleanup(): void {
+    if (cleaned) return;
+    cleaned = true;
+    window.clearTimeout(fallbackTimer);
+    elVideo.removeEventListener("playing", markReady);
+    elVideo.removeEventListener("canplay", markReady);
+    if (liveStartupUiCleanup === cleanup) liveStartupUiCleanup = null;
+  }
+  elVideo.addEventListener("playing", markReady);
+  elVideo.addEventListener("canplay", markReady);
+  liveStartupUiCleanup = cleanup;
+}
+
 /** Stop HLS / native playback without hiding the player shell (used when switching stream). */
 function teardownPlaybackMedia(): void {
   markPlaybackStopped(elVideo);
+  liveStartupUiCleanup?.();
+  liveStartupUiCleanup = null;
   primaryPlaybackKeepAliveCleanup?.();
   primaryPlaybackKeepAliveCleanup = null;
   nodecastStatusPollingCleanup?.();
@@ -2097,7 +2394,9 @@ function teardownPlaybackMedia(): void {
   elPlayerContainer.classList.remove("player-container--live-tv");
 }
 
-function attachNodecastStatusPollingForPlayback(): void {
+function attachNodecastStatusPollingForPlayback(
+  initialDelayMs = NODECAST_STATUS_STARTUP_DELAY_MS
+): void {
   nodecastStatusPollingCleanup?.();
   nodecastStatusPollingCleanup = null;
   const st = state;
@@ -2115,12 +2414,15 @@ function attachNodecastStatusPollingForPlayback(): void {
       inflight = false;
     }
   };
-  void run();
+  const initialTimer = window.setTimeout(() => {
+    void run();
+  }, Math.max(0, initialDelayMs));
   const timer = window.setInterval(() => {
     void run();
   }, NODECAST_STATUS_POLL_MS);
   nodecastStatusPollingCleanup = () => {
     stopped = true;
+    window.clearTimeout(initialTimer);
     window.clearInterval(timer);
   };
 }
@@ -2261,7 +2563,7 @@ function playUrl(
   destroyVodPlayer();
   teardownPlaybackMedia();
   attachNodecastStatusPollingForPlayback();
-  setPlayerBufferingVisible(false);
+  armLiveStartupUi();
   const proxied = proxiedUrl(url);
   elNowPlaying.innerHTML = nowPlayingLiveMarkup(label);
   /* Classe live avant d’afficher le shell : sinon une frame affiche la barre de progression native. */
@@ -2305,12 +2607,13 @@ function playUrl(
       lowLatencyMode: false,
       testBandwidth: false,
       startLevel: 0,
+      startFragPrefetch: true,
       // Keep enough buffered media for smooth playback without drifting too far behind live edge.
       maxBufferLength: 45,
       maxMaxBufferLength: 90,
       backBufferLength: 30,
-      liveSyncDurationCount: 4,
-      liveMaxLatencyDurationCount: 12,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 9,
       manifestLoadingMaxRetry: 12,
       levelLoadingMaxRetry: 12,
       fragLoadingMaxRetry: 14,
@@ -2333,9 +2636,8 @@ function playUrl(
     });
     hls.loadSource(proxied);
     hls.attachMedia(elVideo);
-    hls.on(Hls.Events.MANIFEST_PARSED, async () => {
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
       attachPrimaryPlaybackKeepAlive(elVideo);
-      await waitForStartupBuffer(elVideo);
       void elVideo.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -2862,6 +3164,12 @@ function closeAddChannelsToPackageDialog(): void {
 
 function syncCatalogBackButtonLabel(): void {
   const lab = elBtnBackHome.querySelector(".back-btn__text");
+  if (adultPortalMode && uiShell === "content") {
+    if (lab) lab.textContent = "Adultes";
+    elBtnBackHome.classList.remove("hidden");
+    elBtnGoHome?.classList.remove("hidden");
+    return;
+  }
   const inDetail =
     uiShell === "content" &&
     ((uiTab === "movies" && vodMovieUiPhase === "detail") ||
@@ -2869,6 +3177,41 @@ function syncCatalogBackButtonLabel(): void {
   if (lab) lab.textContent = "Liste";
   elBtnBackHome.classList.toggle("hidden", !inDetail);
   elBtnGoHome?.classList.remove("hidden");
+}
+
+function returnToCurrentPackageListFromToolbar(): void {
+  if (adultPortalMode && uiShell === "content") {
+    void showAdultPortal(adultPortalTab);
+    return;
+  }
+  if (uiShell !== "content" || uiAdminPackageId == null) {
+    showPackagesShell();
+    return;
+  }
+  if (uiTab === "movies") {
+    vodMovieUiPhase = "list";
+    vodDetailStream = null;
+    destroyVodPlayer();
+    activeStreamId = null;
+    renderPackageChannelList();
+    syncCatalogBackButtonLabel();
+    stripVeloraHistorySilently(Math.min(veloraUiHistoryDepth, 1));
+    smoothVeloraMainScrollTop();
+    return;
+  }
+  if (uiTab === "series") {
+    seriesUiPhase = "list";
+    seriesDetailStream = null;
+    destroyVodPlayer();
+    activeStreamId = null;
+    renderPackageChannelList();
+    syncCatalogBackButtonLabel();
+    stripVeloraHistorySilently(Math.min(veloraUiHistoryDepth, 1));
+    smoothVeloraMainScrollTop();
+    return;
+  }
+  renderPackageChannelList();
+  smoothVeloraMainScrollTop();
 }
 
 function catalogPosterRowLooksPlaying(s: LiveStream): boolean {
@@ -3155,7 +3498,7 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
       renderPackageChannelList();
       syncCatalogBackButtonLabel();
       veloraPushNavigationState("vod-detail");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      smoothVeloraMainScrollTop();
     });
 
     elDynamicList.appendChild(card);
@@ -3398,7 +3741,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
         await playStreamByMode(s);
         btnWatch!.classList.toggle("hidden", shouldHideCatalogRegarderButtonMovie(s));
       })();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      smoothVeloraMainScrollTop();
     });
     inner.append(titleEl, btnWatch, metaRow, plot, castBlock, directorBlock);
   }
@@ -3520,7 +3863,7 @@ function renderCatalogMediaDetailView(s: LiveStream, tab: CatalogMediaTab): void
             startVodFakeLoadingOverlay("Préparation de l’épisode…");
             syncSeriesEpisodePlaybackHighlight();
             void playStreamByMode(epStream);
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            smoothVeloraMainScrollTop();
           });
           fragment.appendChild(row);
         }
@@ -3594,7 +3937,9 @@ function renderPackageChannelList(): void {
   try {
     if (!state || uiAdminPackageId == null) return;
     const base = streamsDisplayedForOpenPackage(uiAdminPackageId);
-  const filtered = streamsAfterPill(base, selectedPillId).filter((s) => !shouldHideChannelByName(s.name));
+  const filtered = streamsAfterPill(base, selectedPillId).filter(
+    (s) => adultPortalMode || !shouldHideChannelByName(s.name)
+  );
   const adminTools = showAdminChannelCurateTools();
 
   elDynamicList.innerHTML = "";
@@ -3651,6 +3996,7 @@ function renderPackageChannelList(): void {
     const row = document.createElement("div");
     row.className = "vel-media-item-row";
     row.dataset.streamId = String(s.stream_id);
+    if (activeStreamId === s.stream_id) row.classList.add("vel-media-item-row--active");
 
     if (adminTools) {
       const selectCb = document.createElement("input");
@@ -3704,6 +4050,11 @@ function renderPackageChannelList(): void {
     h4.textContent = titleText;
     h4.title = titleText;
     info.appendChild(h4);
+    const playingBadge = document.createElement("span");
+    playingBadge.className = "vel-channel-playing-badge";
+    playingBadge.textContent = "En lecture";
+    playingBadge.classList.toggle("hidden", activeStreamId !== s.stream_id);
+    info.appendChild(playingBadge);
     const epgId = s.epg_channel_id;
     if (typeof epgId === "string" && epgId.trim()) {
       const p = document.createElement("p");
@@ -3717,11 +4068,15 @@ function renderPackageChannelList(): void {
       elDynamicList.querySelectorAll(".vel-media-item-row").forEach((wrapEl) => {
         const wrap = wrapEl as HTMLElement;
         const sid = wrap.dataset.streamId;
+        wrap.classList.toggle("vel-media-item-row--active", sid === String(s.stream_id));
         wrap.querySelector(".media-item__main")?.classList.toggle("selected", sid === String(s.stream_id));
+        wrap
+          .querySelector(".vel-channel-playing-badge")
+          ?.classList.toggle("hidden", sid !== String(s.stream_id));
       });
       void playStreamByMode(s);
       showPlayerChrome(true);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      smoothVeloraMainScrollTop();
     });
 
     if (adminTools && pkgIdForDrag != null) {
@@ -3984,6 +4339,7 @@ function buildGlobalCountryRowsForSelect(): AdminCountry[] {
 
   const out: AdminCountry[] = [];
   for (const row of internal) {
+    if (isAdultLabel(row.displayName)) continue;
     const id = row.idLive ?? row.idSupabase ?? row.idMovies ?? row.idSeries;
     if (!id) continue;
     out.push({ id, name: row.displayName });
@@ -4358,6 +4714,7 @@ function packagesForSelectedCountry(): AdminPackage[] {
 
     return layout.packages
       .filter((pkg) => {
+        if (isAdultPackage(pkg, layout, uiTab)) return false;
         const pkgCountryName = countryNameForIdInLayout(pkg.country_id, layout);
         if (
           pkgCountryName &&
@@ -4372,6 +4729,7 @@ function packagesForSelectedCountry(): AdminPackage[] {
 
   return layout.packages
     .filter((p) => selectedCountryMatchesPackage(p.country_id, sel, layout))
+    .filter((p) => !isAdultPackage(p, layout, uiTab))
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
@@ -4728,6 +5086,7 @@ function mergeGlobalAllowlistIntoPackages(base: AdminPackage[]): AdminPackage[] 
     const byExactId =
       layout.packages.find((p) => p.id === raw) ?? dbAdminPackages.find((p) => p.id === raw);
     if (byExactId) {
+      if (isAdultPackage(byExactId, layout, uiTab)) continue;
       if (!byId.has(byExactId.id)) {
         byId.set(byExactId.id, { ...byExactId, country_id: anchor });
         injected.add(byExactId.id);
@@ -4738,12 +5097,14 @@ function mergeGlobalAllowlistIntoPackages(base: AdminPackage[]): AdminPackage[] 
     const nk = normalizeGlobalAllowlistNameKey(raw);
     if (!nk) continue;
     for (const p of layout.packages) {
+      if (isAdultPackage(p, layout, uiTab)) continue;
       if (normalizeGlobalAllowlistNameKey(p.name) === nk && !byId.has(p.id)) {
         byId.set(p.id, { ...p, country_id: anchor });
         injected.add(p.id);
       }
     }
     for (const p of dbAdminPackages) {
+      if (isAdultPackage(p, layout, uiTab)) continue;
       if (normalizeGlobalAllowlistNameKey(p.name) === nk && !byId.has(p.id)) {
         byId.set(p.id, { ...p, country_id: anchor });
         injected.add(p.id);
@@ -4755,12 +5116,17 @@ function mergeGlobalAllowlistIntoPackages(base: AdminPackage[]): AdminPackage[] 
 }
 
 function mergedPackagesForGrid(): AdminPackage[] {
+  if (adultPortalMode) {
+    return adultPackagesForTab(adultPortalTab);
+  }
   if (uiTab === "movies" || uiTab === "series") {
     return packagesForSelectedCountry();
   }
   const provider = packagesForSelectedCountry();
   const sid = resolvedDbCountryIdForAdminPackages();
-  const fromDb = sid ? dbAdminPackages.filter((p) => p.country_id === sid) : [];
+  const fromDb = sid
+    ? dbAdminPackages.filter((p) => p.country_id === sid && !isAdultPackage(p, adminConfig, "live"))
+    : [];
   const base = [...fromDb, ...provider];
   if (isSelectedCountryFrance() && selectedAdminCountryId) {
     for (const t of FRANCE_SYNTH_PACKAGES) {
@@ -5541,6 +5907,10 @@ function schedulePackagesGridRender(): void {
 }
 
 function maybeConfirmThenOpenAdminPackage(packageId: string): void {
+  if (adultPortalMode) {
+    openAdminPackage(packageId);
+    return;
+  }
   if (!isGlobalAllowlistInjectedPackageId(packageId)) {
     openAdminPackage(packageId);
     return;
@@ -5629,6 +5999,7 @@ function openAdminPackage(packageId: string, restore?: OpenAdminPackageRestore):
   syncCatalogBackButtonLabel();
   syncAdminAddChannelsButton();
   syncPlayerDismissOverlay();
+  syncAdultPortalChrome();
   syncMainInPackageClass();
   if (!restore?.skipResetScroll) resetVeloraMainScroll();
   veloraPushNavigationState("package");
@@ -5660,6 +6031,7 @@ function applyPackagesShellUi(): void {
   if (state) schedulePackagesGridRender();
   syncCatalogBackButtonLabel();
   syncPlayerDismissOverlay();
+  syncAdultPortalChrome();
   syncMainInPackageClass();
   schedulePersistVeloraUiRoute();
 }
@@ -5673,6 +6045,7 @@ function showPackagesShell(): void {
 }
 
 function goLiveHome(): void {
+  exitAdultPortalMode();
   uiTab = "live";
   populateCountrySelectFromAdmin();
   showPackagesShell();
@@ -6437,6 +6810,7 @@ function showVodPlaceholder(
   kind: "movies" | "series",
   reason: "no-nodecast" | "no-xtream-source" | "empty" | "catalog-fetch-error" = "no-nodecast"
 ): void {
+  exitAdultPortalMode();
   activeStreamId = null;
   destroyPlayer();
   destroyVodPlayer();
@@ -6711,6 +7085,7 @@ function selectedCountryMediaSlicesLoaded(tab: "movies" | "series"): boolean {
 }
 
 async function openNodecastMediaShellAsync(tab: "movies" | "series"): Promise<void> {
+  exitAdultPortalMode();
   if (isVeloraCatalogCacheDebugEnabled()) {
     console.info("[Velora] Tab switch (media shell start)", {
       requestedTab: tab,
@@ -6888,7 +7263,7 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
       applyVodTranscodeSessionMeta(getNodecastTranscodeSessionMeta(resolved));
       playVodUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders);
       syncSeriesEpisodePlaybackHighlight();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      smoothVeloraMainScrollTop();
       return;
     }
 
@@ -7120,6 +7495,8 @@ function disconnect(): void {
   selectedPillId = "all";
   uiTab = "live";
   uiShell = "packages";
+  adultPortalMode = false;
+  adultPortalTab = "live";
   uiAdminPackageId = null;
   destroyPlayer();
   destroyVodPlayer();
@@ -7133,6 +7510,7 @@ function disconnect(): void {
   elContentView.classList.add("hidden");
   elPackagesView.classList.remove("hidden");
   elMainTabs.classList.remove("hidden");
+  syncAdultPortalChrome();
   elCatPillsWrap.classList.add("hidden");
   setTabsActive("live");
   applyPresetTheme("default");
@@ -7211,36 +7589,28 @@ elBtnLogout.addEventListener("click", disconnect);
 elBtnClosePlayer?.addEventListener("click", () => closePlayerUserAction());
 elBtnCloseVodPlayer?.addEventListener("click", () => closeVodPlayerUserAction());
 elBtnLogoHome?.addEventListener("click", () => {
+  exitAdultPortalMode();
+  uiTab = "live";
   showPackagesShell();
 });
-elBtnBackHome.addEventListener("click", () => {
-  if (uiTab === "movies" && vodMovieUiPhase === "detail" && uiShell === "content") {
-    vodMovieUiPhase = "list";
-    vodDetailStream = null;
-    closeVodPlayerUserAction();
-    stripVeloraHistorySilently(1);
-    syncCatalogBackButtonLabel();
-    if (state && uiAdminPackageId != null) renderPackageChannelList();
-    return;
-  }
-  if (uiTab === "series" && seriesUiPhase === "detail" && uiShell === "content") {
-    seriesUiPhase = "list";
-    seriesDetailStream = null;
-    closeVodPlayerUserAction();
-    stripVeloraHistorySilently(1);
-    syncCatalogBackButtonLabel();
-    if (state && uiAdminPackageId != null) renderPackageChannelList();
-    return;
-  }
-  showPackagesShell();
-});
+elBtnBackHome.addEventListener("click", () => returnToCurrentPackageListFromToolbar());
 elBtnGoHome?.addEventListener("click", () => {
+  exitAdultPortalMode();
+  uiTab = "live";
   showPackagesShell();
 });
 
 elTabLive.addEventListener("click", () => onTabClick("live"));
 elTabMovies.addEventListener("click", () => onTabClick("movies"));
 elTabSeries.addEventListener("click", () => onTabClick("series"));
+elBtnAdultPortal?.addEventListener("click", () => void showAdultPortal("live"));
+elAdultTabLive?.addEventListener("click", () => void showAdultPortal("live"));
+elAdultTabMovies?.addEventListener("click", () => void showAdultPortal("movies"));
+elAdultTabHome?.addEventListener("click", () => {
+  exitAdultPortalMode();
+  uiTab = "live";
+  showPackagesShell();
+});
 
 elCountrySelect.addEventListener("change", onCountryChange);
 

@@ -1974,10 +1974,10 @@ a.topbar__admin-link {
 
 /* Mobile: sticky header → sidebar (tabs + pays) → catalogue ; desktop → grid (voir media 1024px) */
 .vel-dashboard {
-  flex: 1 1 0%;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 100%;
   min-width: 0;
 }
 
@@ -2047,6 +2047,7 @@ a.topbar__admin-link {
   padding: 0.65rem 1rem;
   flex-shrink: 0;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .vel-brand {
@@ -2055,6 +2056,7 @@ a.topbar__admin-link {
   letter-spacing: -0.06em;
   color: var(--vel-text);
   font-family: Inter, var(--font);
+  flex: 0 0 auto;
 }
 
 .vel-brand--home {
@@ -2131,9 +2133,42 @@ a.topbar__admin-link {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-shrink: 0;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+}
+
+.vel-adult-btn {
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0.12rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  background: rgba(30, 8, 18, 0.72);
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.1), 0 8px 22px rgba(0, 0, 0, 0.28);
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.vel-adult-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vel-adult-btn:hover,
+.vel-adult-btn.active {
+  transform: translateY(-1px);
+  border-color: rgba(251, 113, 133, 0.78);
+  box-shadow: 0 0 0 1px rgba(251, 113, 133, 0.24), 0 0 26px rgba(225, 29, 72, 0.24);
 }
 
 .vel-settings-btn {
@@ -3152,6 +3187,58 @@ a.topbar__admin-link {
 }
 
 @media (max-width: 380px) {
+  .vel-header {
+    gap: 0.4rem;
+    padding: 0.55rem 0.55rem;
+  }
+
+  .vel-brand {
+    font-size: 1.25rem;
+  }
+
+  .vel-header__right {
+    gap: 0.32rem;
+  }
+
+  .main--velora .vel-header__country {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .main--velora .vel-header__country .country-select,
+  .country-select {
+    max-width: none;
+    min-width: 0;
+    padding: 0.38rem 0.42rem;
+    font-size: 0.78rem;
+  }
+
+  .vel-adult-btn {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .vel-adult-portal {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+
+  .vel-adult-portal__inner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.55rem;
+    padding: 0.65rem;
+  }
+
+  .vel-adult-portal__actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .vel-adult-tab {
+    flex: 1 1 0;
+  }
+
   .player-container {
     width: calc(100% - 1rem);
     border-radius: 14px;
@@ -3531,6 +3618,155 @@ body.vel-vod-fullscreen-active .main--velora {
     0 0 22px rgba(252, 211, 77, 0.2);
 }
 
+.vel-adult-portal {
+  padding: 0.25rem 1rem 1rem;
+}
+
+.vel-adult-portal.hidden {
+  display: none !important;
+}
+
+.vel-adult-portal__inner {
+  width: min(56rem, 100%);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse 95% 85% at 7% 0%, rgba(244, 114, 182, 0.34), transparent 56%),
+    radial-gradient(ellipse 80% 70% at 98% 18%, rgba(251, 113, 133, 0.26), transparent 54%),
+    linear-gradient(135deg, rgba(190, 24, 93, 0.62), rgba(88, 28, 135, 0.5) 48%, rgba(245, 158, 11, 0.22)),
+    rgba(20, 3, 18, 0.9);
+  border: 1px solid rgba(244, 114, 182, 0.46);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 18px 42px rgba(0, 0, 0, 0.32),
+    0 0 44px rgba(236, 72, 153, 0.22);
+}
+
+.vel-adult-portal__mark {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  display: grid;
+  place-items: center;
+}
+
+.vel-adult-portal__mark img {
+  width: 2.75rem;
+  height: 2.75rem;
+  object-fit: contain;
+}
+
+.vel-adult-portal__copy h2 {
+  margin: 0;
+  font-size: 1.28rem;
+  line-height: 1.08;
+  font-weight: 900;
+  color: rgba(255, 245, 248, 0.98);
+}
+
+.vel-adult-portal__copy p {
+  margin: 0.2rem 0 0;
+  color: rgba(255, 214, 226, 0.72);
+  font-size: 0.82rem;
+}
+
+.vel-adult-portal__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: rgba(10, 4, 12, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vel-adult-tab {
+  border-radius: 999px;
+  border: 0;
+  padding: 0.48rem 0.9rem;
+  color: rgba(255, 226, 236, 0.78);
+  background: transparent;
+  font-weight: 800;
+  font-size: 0.82rem;
+}
+
+.vel-adult-tab.active,
+.vel-adult-tab:hover {
+  color: #fff;
+  background: linear-gradient(135deg, #ec4899, #e11d48 48%, #f59e0b);
+  box-shadow: 0 0 24px rgba(236, 72, 153, 0.45);
+}
+
+.vel-adult-tab--home {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 248, 252, 0.86);
+}
+
+.main--velora-adult {
+  --vel-bg: #080208;
+  --vel-surface: #24091c;
+  --vel-primary: #ec4899;
+  --vel-accent-glow: rgba(236, 72, 153, 0.42);
+  background-image:
+    radial-gradient(ellipse 90% 62% at 18% -4%, rgba(236, 72, 153, 0.34), transparent 60%),
+    radial-gradient(ellipse 70% 52% at 90% 20%, rgba(244, 63, 94, 0.22), transparent 54%),
+    radial-gradient(ellipse 85% 58% at 50% 115%, rgba(217, 70, 239, 0.18), transparent 58%),
+    linear-gradient(170deg, rgba(88, 28, 135, 0.28), transparent 42%);
+}
+
+.main--velora-adult .vel-sidebar {
+  display: none;
+}
+
+.main--velora-adult .vel-body {
+  width: 100%;
+}
+
+.vel-adult-confirm-dialog__panel {
+  background:
+    radial-gradient(ellipse 80% 70% at 50% -12%, rgba(225, 29, 72, 0.32), transparent 58%),
+    linear-gradient(165deg, rgba(38, 10, 25, 0.99), rgba(13, 6, 18, 0.99));
+  border-color: rgba(251, 113, 133, 0.38);
+}
+
+.vel-adult-confirm-dialog__icon {
+  display: block;
+  width: 4.2rem;
+  height: 4.2rem;
+  object-fit: contain;
+  margin: 0 auto 0.75rem;
+  filter: drop-shadow(0 0 18px rgba(225, 29, 72, 0.35));
+}
+
+@media (max-width: 380px) {
+  .vel-adult-portal {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+
+  .vel-adult-portal__inner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.55rem;
+    padding: 0.65rem;
+  }
+
+  .vel-adult-portal__actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .vel-adult-tab {
+    flex: 1 1 0;
+  }
+}
+
 .grid.vel-packages {
   display: grid;
   /* At least 2 columns: min track ≤ (container − one gap) / 2; still cap desired card width at 180px. */
@@ -3794,11 +4030,11 @@ body.vel-vod-fullscreen-active .main--velora {
 .main--velora:has(#content-view.content-view--vod-film-detail:not(.hidden))
   .vel-package-toolbar-sticky
   .vel-content-toolbar {
-  padding: 0.65rem max(1rem, env(safe-area-inset-right)) 0.55rem max(1rem, env(safe-area-inset-left));
-  margin-bottom: 0;
+  padding: 0.55rem max(1rem, env(safe-area-inset-right)) 0.45rem max(1rem, env(safe-area-inset-left));
+  margin-bottom: 0.15rem;
   flex-shrink: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: linear-gradient(180deg, rgba(12, 10, 18, 0.95) 0%, rgba(12, 10, 18, 0.55) 100%);
+  border-bottom: 0;
+  background: transparent;
   border-radius: 0;
 }
 
@@ -4013,11 +4249,11 @@ body.vel-vod-fullscreen-active .main--velora {
   align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.7rem;
-  padding: 0.3rem;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: linear-gradient(180deg, rgba(18, 17, 28, 0.92) 0%, rgba(10, 9, 18, 0.82) 100%);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .vel-content-toolbar .back-btn {
@@ -4062,20 +4298,25 @@ body.vel-vod-fullscreen-active .main--velora {
   margin: 0;
   display: inline-flex;
   align-items: center;
-  gap: 0.42rem;
-  padding: 0.45rem 0.7rem;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
+  gap: 0.5rem;
+  min-height: 2.55rem;
+  padding: 0.52rem 0.86rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--vel-primary, #8a2be2) 34%, rgba(255, 255, 255, 0.14));
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--vel-primary, #8a2be2) 24%, transparent), transparent 62%),
+    rgba(255, 255, 255, 0.055);
   color: var(--vel-back, rgba(220, 214, 244, 0.93));
   font-weight: 700;
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   line-height: 1.2;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   font-family: Inter, var(--font);
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 10px 24px rgba(0, 0, 0, 0.22);
   transition:
     color 0.15s ease,
     transform 0.12s ease,
@@ -4085,9 +4326,13 @@ body.vel-vod-fullscreen-active .main--velora {
 }
 
 .back-btn__icon {
+  width: 1.52rem;
+  height: 1.52rem;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: color-mix(in srgb, var(--vel-primary, #8a2be2) 18%, rgba(255, 255, 255, 0.08));
   color: var(--vel-back, rgba(200, 185, 255, 0.95));
   transition: color 0.18s ease, transform 0.18s ease, filter 0.15s ease;
 }
@@ -4098,7 +4343,9 @@ body.vel-vod-fullscreen-active .main--velora {
 
 .back-btn:hover {
   filter: brightness(1.1);
-  background: rgba(255, 255, 255, 0.07);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--vel-primary, #8a2be2) 34%, transparent), transparent 62%),
+    rgba(255, 255, 255, 0.085);
   border-color: color-mix(in srgb, var(--vel-primary, #8a2be2) 45%, rgba(255, 255, 255, 0.12));
 }
 
@@ -4422,6 +4669,38 @@ body.vel-vod-fullscreen-active .main--velora {
   white-space: nowrap;
 }
 
+.vel-channel-playing-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.18rem 0.48rem;
+  border-radius: 999px;
+  color: #06110a;
+  background: linear-gradient(135deg, #bbf7d0, #22c55e);
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.36);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.vel-channel-playing-badge::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: #052e16;
+  box-shadow: 0 0 0 3px rgba(5, 46, 22, 0.14);
+}
+
+.vel-channel-playing-badge.hidden {
+  display: none !important;
+}
+
 /* Narrow viewports: bounded width + no gradient clip so ellipsis / line-clamp work reliably. */
 @media (max-width: 640px) {
   .media-info h4 {
@@ -4459,6 +4738,18 @@ body.vel-vod-fullscreen-active .main--velora {
   gap: 6px;
   width: 100%;
   min-width: 0;
+  border-radius: 16px;
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.vel-media-item-row--active {
+  background: color-mix(in srgb, #22c55e 16%, var(--vel-primary, #8a2be2) 8%, transparent);
+  box-shadow:
+    inset 4px 0 0 #22c55e,
+    0 0 0 1px rgba(34, 197, 94, 0.32),
+    0 0 24px rgba(34, 197, 94, 0.13);
 }
 
 .vel-channel-select {
@@ -5617,6 +5908,10 @@ body.vel-vod-fullscreen-active .main--velora {
     align-items: stretch;
   }
 
+  .main--velora-adult .vel-dashboard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .vel-sidebar {
     grid-column: 1;
     grid-row: 1 / -1;
@@ -5644,11 +5939,72 @@ body.vel-vod-fullscreen-active .main--velora {
     margin-bottom: 0.5rem;
   }
 
+  .main--velora-adult .vel-sticky-top {
+    grid-column: 1;
+  }
+
   .vel-body {
     grid-column: 2;
     grid-row: 2;
     min-height: 0;
     padding-bottom: 1.5rem;
+  }
+
+  .main--velora-adult .vel-body {
+    grid-column: 1;
+  }
+
+  .main--velora-live-package .vel-dashboard {
+    grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: 0.85rem;
+  }
+
+  .main--velora-live-package .vel-sidebar {
+    display: none;
+  }
+
+  .main--velora-live-package .vel-body {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    padding: 0.75rem 0 1.5rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(12, 10, 22, 0.26);
+  }
+
+  .main--velora-live-package .vel-sticky-top {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    border-left: 0;
+  }
+
+  .main--velora-live-package #content-view {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .main--velora-live-package
+    #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.62rem;
+  }
+
+  .main--velora-live-package
+    #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail)
+    .vel-category-heading {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+  }
+
+  .main--velora-live-package
+    #dynamic-list.item-list:not(.item-list--vod-vertical):not(.item-list--vod-film-detail)
+    .vel-category-heading__title {
+    font-size: 1.08rem;
+  }
+
+  .main--velora-live-package .media-item {
+    min-height: 3.3rem;
   }
 
   /* Navigation latérale */

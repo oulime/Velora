@@ -296,6 +296,19 @@
               </div>
               <button
                 type="button"
+                id="btn-adult-portal"
+                class="vel-adult-btn"
+                title="Contenu adulte"
+                aria-label="Contenu adulte +18"
+              >
+                <img
+                  src="https://i.ibb.co/v6mD0wr9/vecteezy-warning-for-children-under-18-years-of-age-18-plus-circle-icon-34634000.png"
+                  alt=""
+                  aria-hidden="true"
+                />
+              </button>
+              <button
+                type="button"
                 id="btn-settings"
                 class="vel-settings-btn hidden"
                 title="Paramètres (admin)"
@@ -467,6 +480,32 @@
           </aside>
 
           <div class="vel-body">
+            <div id="adult-view" class="vel-adult-portal hidden" aria-label="Contenu adulte">
+              <div class="vel-adult-portal__inner">
+                <div class="vel-adult-portal__mark">
+                  <img
+                    src="https://i.ibb.co/v6mD0wr9/vecteezy-warning-for-children-under-18-years-of-age-18-plus-circle-icon-34634000.png"
+                    alt=""
+                    aria-hidden="true"
+                  />
+                </div>
+                <div class="vel-adult-portal__copy">
+                  <h2>Adultes +18</h2>
+                  <p>Acces reserve aux visiteurs majeurs.</p>
+                </div>
+                <div class="vel-adult-portal__actions" role="tablist" aria-label="Type de contenu adulte">
+                  <button type="button" id="adult-tab-live" class="vel-adult-tab active" data-adult-tab="live">
+                    Lives
+                  </button>
+                  <button type="button" id="adult-tab-movies" class="vel-adult-tab" data-adult-tab="movies">
+                    Films
+                  </button>
+                  <button type="button" id="adult-tab-home" class="vel-adult-tab vel-adult-tab--home">
+                    Accueil
+                  </button>
+                </div>
+              </div>
+            </div>
             <div id="packages-view" class="grid vel-packages" aria-label="Bouquets"></div>
 
             <div id="content-view" class="hidden">
@@ -850,6 +889,29 @@
           </button>
           <button type="button" id="vel-global-pkg-confirm-yes" class="vel-global-pkg-confirm-dialog__btn primary">
             Oui
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="vel-adult-confirm-dialog" class="vel-global-pkg-confirm-dialog vel-adult-confirm-dialog" aria-modal="true">
+      <div class="vel-global-pkg-confirm-dialog__panel vel-adult-confirm-dialog__panel">
+        <img
+          class="vel-adult-confirm-dialog__icon"
+          src="https://i.ibb.co/v6mD0wr9/vecteezy-warning-for-children-under-18-years-of-age-18-plus-circle-icon-34634000.png"
+          alt=""
+          aria-hidden="true"
+        />
+        <h2 class="vel-global-pkg-confirm-dialog__title">Contenu adultes +18</h2>
+        <p class="vel-global-pkg-confirm-dialog__text">
+          Cette section est reservee aux personnes majeures. Confirmez que vous avez 18 ans ou plus pour continuer.
+        </p>
+        <div class="vel-global-pkg-confirm-dialog__actions">
+          <button type="button" id="vel-adult-confirm-no" class="vel-global-pkg-confirm-dialog__btn">
+            Annuler
+          </button>
+          <button type="button" id="vel-adult-confirm-yes" class="vel-global-pkg-confirm-dialog__btn primary">
+            J'ai 18+
           </button>
         </div>
       </div>
