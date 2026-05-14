@@ -4076,7 +4076,6 @@ function renderPackageChannelList(): void {
       });
       void playStreamByMode(s);
       showPlayerChrome(true);
-      smoothVeloraMainScrollTop();
     });
 
     if (adminTools && pkgIdForDrag != null) {
