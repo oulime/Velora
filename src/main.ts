@@ -378,6 +378,9 @@ let tvLastHandledKeyAction: TvDirection | "enter" | "back" | null = null;
 let tvLastHandledKeyAt = 0;
 let tvLastKeydownAction: TvDirection | "enter" | "back" | null = null;
 let tvLastKeydownAt = 0;
+let tvPointerNavLastX: number | null = null;
+let tvPointerNavLastY: number | null = null;
+let tvPointerNavLastAt = 0;
 
 function readTvModeRequested(): boolean {
   try {
@@ -763,11 +766,53 @@ function handleTvKeyboardEvent(event: KeyboardEvent): void {
 function handleTvPointerMove(event: PointerEvent | MouseEvent): void {
   if (!tvNavigationEnabled) return;
   const now = Date.now();
-  if (now - tvLastPointerFocusAt < 80) return;
-  const focusable = closestTvFocusableFromPoint(event.clientX, event.clientY);
+  const x = event.clientX;
+  const y = event.clientY;
+  const prevX = tvPointerNavLastX;
+  const prevY = tvPointerNavLastY;
+  tvPointerNavLastX = x;
+  tvPointerNavLastY = y;
+
+  if (prevX == null || prevY == null) {
+    const focusable = closestTvFocusableFromPoint(x, y);
+    if (focusable && !getCurrentTvFocus()) setTvFocus(focusable, false);
+    return;
+  }
+
+  const dx = x - prevX;
+  const dy = y - prevY;
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  const pointerDirectionThreshold = 16;
+  const pointerDirectionCooldownMs = 230;
+  const movedEnough = Math.max(absX, absY) >= pointerDirectionThreshold;
+  if (movedEnough && now - tvPointerNavLastAt >= pointerDirectionCooldownMs) {
+    const direction: TvDirection =
+      absX >= absY ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up";
+    tvPointerNavLastAt = now;
+    moveTvFocus(direction);
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  if (now - tvLastPointerFocusAt < 450 || getCurrentTvFocus()) return;
+  const focusable = closestTvFocusableFromPoint(x, y);
   if (!focusable) return;
   tvLastPointerFocusAt = now;
   setTvFocus(focusable, false);
+}
+
+function handleTvClickEvent(event: MouseEvent): void {
+  if (!tvNavigationEnabled) return;
+  const current = getCurrentTvFocus();
+  if (!current) return;
+  const target = event.target instanceof Node ? event.target : null;
+  if (target && current.contains(target)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  clickCurrentTvFocus();
 }
 
 function syncTvFocusableMetadata(root: ParentNode = document): void {
@@ -852,6 +897,7 @@ function initTvNavigation(): void {
   document.addEventListener("keyup", handleTvKeyboardEvent, true);
   window.addEventListener("mousemove", handleTvPointerMove, true);
   document.addEventListener("pointermove", handleTvPointerMove, true);
+  document.addEventListener("click", handleTvClickEvent, true);
 
   window.addEventListener("storage", (event) => {
     if (event.key !== TV_MODE_STORAGE_KEY) return;
