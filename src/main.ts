@@ -1,4 +1,4 @@
-import Hls, { ErrorTypes, type ErrorData } from "hls.js";
+import Hls, { ErrorDetails, ErrorTypes, type ErrorData } from "hls.js";
 import { isAdminSession, tryConsumeAdminAccessFromUrl } from "./adminSession";
 import {
   displayChannelName,
@@ -44,7 +44,9 @@ import {
   resolveNodecastStreamUrl,
   resolveNodecastVodStreamUrl,
   resolveNodecastSeriesPlayableUrl,
+  createNodecastLiveTranscodeUrl,
   createNodecastVodTranscodeSession,
+  probeNodecastStreamCompatibility,
   getNodecastTranscodeSessionMeta,
   fetchNodecastVodInfo,
   fetchNodecastSeriesInfo,
@@ -135,6 +137,7 @@ const elLiveCtlPlay = document.getElementById("live-ctl-play") as HTMLButtonElem
 const elLiveCtlMute = document.getElementById("live-ctl-mute") as HTMLButtonElement | null;
 const elLiveCtlFullscreen = document.getElementById("live-ctl-fullscreen") as HTMLButtonElement | null;
 const VOD_VOLUME_LS_KEY = "velora_vod_volume_v1";
+const LIVE_TRANSCODE_NEEDED_LS_PREFIX = "velora_live_transcode_needed_v1";
 
 function readPersistedVodVolume(): number {
   try {
@@ -948,6 +951,10 @@ let hlsVod: Hls | null = null;
 let primaryPlaybackKeepAliveCleanup: (() => void) | null = null;
 let nodecastStatusPollingCleanup: (() => void) | null = null;
 let liveStartupUiCleanup: (() => void) | null = null;
+let liveSilentAudioMonitorCleanup: (() => void) | null = null;
+let liveAudioContext: AudioContext | null = null;
+let liveAudioSource: MediaElementAudioSourceNode | null = null;
+let liveAudioAnalyser: AnalyserNode | null = null;
 let mediaPlaybackRequestId = 0;
 let livePlaybackSessionId = 0;
 const NODECAST_STATUS_POLL_MS = 3000;
@@ -1389,6 +1396,166 @@ function ensureHlsAudioTrack(instance: Hls): void {
   if (instance.audioTrack >= 0) return;
   const defaultIndex = tracks.findIndex((track) => track.default);
   instance.audioTrack = defaultIndex >= 0 ? defaultIndex : 0;
+}
+
+function audioCodecLikelyUnsupportedInBrowser(codec: string | undefined): boolean {
+  const c = (codec ?? "").toLowerCase();
+  if (!c) return false;
+  return /\b(ac-?3|ec-?3|eac3|dts|dca|truehd|mlp|opus|mp2)\b/.test(c);
+}
+
+function hlsHasLikelyUnsupportedAudio(instance: Hls): boolean {
+  const audioTracks = instance.audioTracks ?? [];
+  if (
+    audioTracks.some(
+      (track) =>
+        audioCodecLikelyUnsupportedInBrowser(track.audioCodec) ||
+        (track.unknownCodecs ?? []).some((codec) => audioCodecLikelyUnsupportedInBrowser(codec))
+    )
+  ) {
+    return true;
+  }
+  const levels = instance.levels ?? [];
+  return levels.some((level) => audioCodecLikelyUnsupportedInBrowser(level.audioCodec));
+}
+
+function liveProbeSuggestsTranscode(probe: {
+  audio?: string;
+  needsTranscode?: boolean;
+  compatible?: boolean;
+  container?: string;
+} | null): boolean {
+  if (!probe) return false;
+  if (probe.needsTranscode === true) return true;
+  if (probe.compatible === false) return true;
+  if (probe.container?.toLowerCase() === "mpegts" && audioCodecLikelyUnsupportedInBrowser(probe.audio)) {
+    return true;
+  }
+  return audioCodecLikelyUnsupportedInBrowser(probe.audio);
+}
+
+function liveTranscodeStorageKey(url: string, label: string, stableKey?: string): string {
+  if (stableKey?.trim()) {
+    return `${LIVE_TRANSCODE_NEEDED_LS_PREFIX}:${stableKey.trim().toLowerCase()}`;
+  }
+  let id = "";
+  try {
+    const u = new URL(url);
+    const streamPathMatch =
+      u.pathname.match(/\/stream\/(\d+)\/live/i) ||
+      u.pathname.match(/\/live\/(?:[^/]+\/){2}(\d+)(?:\.[a-z0-9]+)?$/i) ||
+      u.pathname.match(/\/(\d+)\.m3u8$/i);
+    if (streamPathMatch?.[1]) {
+      id = `${u.hostname.toLowerCase()}::${streamPathMatch[1]}`;
+    }
+  } catch {
+    /* fall back to label */
+  }
+  if (!id) {
+    id = label.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 120);
+  }
+  return `${LIVE_TRANSCODE_NEEDED_LS_PREFIX}:${id}`;
+}
+
+function liveSourceNeedsTranscode(url: string, label: string, stableKey?: string): boolean {
+  try {
+    if (window.localStorage.getItem(liveTranscodeStorageKey(url, label, stableKey)) === "1") {
+      return true;
+    }
+    if (stableKey?.trim() && window.localStorage.getItem(liveTranscodeStorageKey(url, label)) === "1") {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function rememberLiveSourceNeedsTranscode(url: string, label: string, stableKey?: string): void {
+  try {
+    window.localStorage.setItem(liveTranscodeStorageKey(url, label, stableKey), "1");
+    if (stableKey?.trim()) {
+      window.localStorage.setItem(liveTranscodeStorageKey(url, label), "1");
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function ensureLiveAudioAnalyser(video: HTMLVideoElement): AnalyserNode | null {
+  try {
+    if (!liveAudioContext) {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return null;
+      liveAudioContext = new AudioCtx();
+    }
+    if (!liveAudioSource) {
+      liveAudioSource = liveAudioContext.createMediaElementSource(video);
+      liveAudioAnalyser = liveAudioContext.createAnalyser();
+      liveAudioAnalyser.fftSize = 2048;
+      liveAudioSource.connect(liveAudioAnalyser);
+      liveAudioAnalyser.connect(liveAudioContext.destination);
+    }
+    return liveAudioAnalyser;
+  } catch {
+    return null;
+  }
+}
+
+function liveAudioRms(analyser: AnalyserNode): number {
+  const data = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (const v of data) {
+    const centered = (v - 128) / 128;
+    sum += centered * centered;
+  }
+  return Math.sqrt(sum / data.length);
+}
+
+function scheduleLiveSilentAudioFallback(
+  sessionId: number,
+  tryFallback: (reason: string) => void
+): void {
+  liveSilentAudioMonitorCleanup?.();
+  let cancelled = false;
+  const startTimer = window.setTimeout(() => {
+    void (async () => {
+      if (cancelled || sessionId !== livePlaybackSessionId) return;
+      if (elVideo.paused || elVideo.muted || elVideo.volume <= 0) return;
+      if (!(elVideo.currentTime > 2) || elVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      const analyser = ensureLiveAudioAnalyser(elVideo);
+      const ctx = liveAudioContext;
+      if (!analyser || !ctx) return;
+      try {
+        if (ctx.state === "suspended") await ctx.resume();
+      } catch {
+        return;
+      }
+      if (ctx.state !== "running") return;
+      let total = 0;
+      let peak = 0;
+      const samples = 18;
+      for (let i = 0; i < samples; i++) {
+        if (cancelled || sessionId !== livePlaybackSessionId) return;
+        if (elVideo.paused || elVideo.muted || elVideo.volume <= 0) return;
+        const rms = liveAudioRms(analyser);
+        total += rms;
+        peak = Math.max(peak, rms);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      const avg = total / samples;
+      if (avg < 0.0018 && peak < 0.004) {
+        tryFallback("silent audio output detected");
+      }
+    })();
+  }, 6500);
+  liveSilentAudioMonitorCleanup = () => {
+    cancelled = true;
+    window.clearTimeout(startTimer);
+  };
 }
 
 function stopCurrentVodTranscodeSession(): void {
@@ -2673,6 +2840,8 @@ function teardownPlaybackMedia(): void {
   markPlaybackStopped(elVideo);
   liveStartupUiCleanup?.();
   liveStartupUiCleanup = null;
+  liveSilentAudioMonitorCleanup?.();
+  liveSilentAudioMonitorCleanup = null;
   primaryPlaybackKeepAliveCleanup?.();
   primaryPlaybackKeepAliveCleanup = null;
   nodecastStatusPollingCleanup?.();
@@ -2887,7 +3056,9 @@ function playUrl(
   label: string,
   upstreamAuth?: Record<string, string>,
   /** Live HLS (direct Xtream / chaîne Nodecast) : masque la barre de progression native (flux non borné). */
-  hideNativeProgressBar = false
+  hideNativeProgressBar = false,
+  allowLiveAudioTranscodeFallback = true,
+  liveTranscodeKey?: string
 ): void {
   if (isTrialBlocked()) {
     showTrialExpiredModal();
@@ -2915,6 +3086,56 @@ function playUrl(
       Object.values(upstreamAuth).some((v) => typeof v === "string" && v.trim())
   );
 
+  let liveAudioFallbackStarted = false;
+  const tryLiveAudioTranscodeFallback = (reason: string): void => {
+    if (!allowLiveAudioTranscodeFallback || liveAudioFallbackStarted) return;
+    if (!state || state.mode !== "nodecast") return;
+    if (/\/api\/transcode\//i.test(url)) return;
+    liveAudioFallbackStarted = true;
+    const fallbackSessionId = sessionId;
+    liveSilentAudioMonitorCleanup?.();
+    liveSilentAudioMonitorCleanup = null;
+    rememberLiveSourceNeedsTranscode(url, label, liveTranscodeKey);
+    console.warn(`[Live audio] retrying with Nodecast transcode: ${reason}`, { label });
+    void (async () => {
+      const transcoded = await createNodecastLiveTranscodeUrl(state!.base, url, upstreamAuth);
+      if (fallbackSessionId !== livePlaybackSessionId) return;
+      if (!transcoded) {
+        playUrl(url, label, upstreamAuth, hideNativeProgressBar, false, liveTranscodeKey);
+        return;
+      }
+      playUrl(transcoded, label, upstreamAuth, hideNativeProgressBar, false, liveTranscodeKey);
+    })();
+  };
+
+  if (
+    allowLiveAudioTranscodeFallback &&
+    state?.mode === "nodecast" &&
+    !/\/api\/transcode\//i.test(url) &&
+    liveSourceNeedsTranscode(url, label, liveTranscodeKey)
+  ) {
+    tryLiveAudioTranscodeFallback("known silent-audio live source");
+    return;
+  }
+
+  if (
+    allowLiveAudioTranscodeFallback &&
+    state?.mode === "nodecast" &&
+    !/\/api\/transcode\//i.test(url)
+  ) {
+    const probeSessionId = sessionId;
+    void probeNodecastStreamCompatibility(state.base, url, upstreamAuth)
+      .then((probe) => {
+        if (probeSessionId !== livePlaybackSessionId) return;
+        if (liveProbeSuggestsTranscode(probe)) {
+          tryLiveAudioTranscodeFallback(
+            probe?.audio ? `probe audio=${probe.audio}` : "probe reported incompatible stream"
+          );
+        }
+      })
+      .catch(() => {});
+  }
+
   if (urlLooksLikeProgressiveMedia(url) || urlLooksLikeProgressiveMedia(proxied)) {
     if (sessionId !== livePlaybackSessionId) return;
     elVideo.src = proxied;
@@ -2925,6 +3146,9 @@ function playUrl(
     };
     prepareLiveAudioForPlayback(elVideo);
     void elVideo.play().catch(() => {});
+    if (allowLiveAudioTranscodeFallback) {
+      scheduleLiveSilentAudioFallback(sessionId, tryLiveAudioTranscodeFallback);
+    }
     return;
   }
 
@@ -2938,6 +3162,9 @@ function playUrl(
     elVideo.src = proxied;
     prepareLiveAudioForPlayback(elVideo);
     void elVideo.play().catch(() => {});
+    if (allowLiveAudioTranscodeFallback) {
+      scheduleLiveSilentAudioFallback(sessionId, tryLiveAudioTranscodeFallback);
+    }
     return;
   }
 
@@ -2980,17 +3207,34 @@ function playUrl(
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
       if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
       ensureHlsAudioTrack(hlsInstance);
+      if (hlsHasLikelyUnsupportedAudio(hlsInstance)) {
+        tryLiveAudioTranscodeFallback("unsupported audio codec in manifest");
+        return;
+      }
       attachPrimaryPlaybackKeepAlive(elVideo);
       prepareLiveAudioForPlayback(elVideo);
       void elVideo.play().catch(() => {});
+      if (allowLiveAudioTranscodeFallback) {
+        scheduleLiveSilentAudioFallback(sessionId, tryLiveAudioTranscodeFallback);
+      }
     });
     hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
       if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
       ensureHlsAudioTrack(hlsInstance);
+      if (hlsHasLikelyUnsupportedAudio(hlsInstance)) {
+        tryLiveAudioTranscodeFallback("unsupported audio track codec");
+      }
     });
     hlsInstance.on(Hls.Events.ERROR, (_e, data) => {
       if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
       if (data.fatal) {
+        if (
+          data.details === ErrorDetails.BUFFER_ADD_CODEC_ERROR ||
+          data.details === ErrorDetails.BUFFER_INCOMPATIBLE_CODECS_ERROR
+        ) {
+          tryLiveAudioTranscodeFallback(String(data.details));
+          return;
+        }
         if (data.type === ErrorTypes.NETWORK_ERROR) {
           try {
             hlsInstance.startLoad(-1);
@@ -3018,6 +3262,34 @@ function playUrl(
   elNowPlaying.innerHTML = nowPlayingErrorMarkup(
     "HLS non pris en charge dans ce navigateur."
   );
+}
+
+async function playLiveUrlWithAudioPolicy(
+  url: string,
+  label: string,
+  upstreamAuth: Record<string, string> | undefined,
+  hideNativeProgressBar: boolean,
+  liveTranscodeKey: string
+): Promise<void> {
+  const requestId = mediaPlaybackRequestId;
+  if (state?.mode === "nodecast" && liveSourceNeedsTranscode(url, label, liveTranscodeKey)) {
+    destroyVodPlayer();
+    teardownPlaybackMedia();
+    configureLiveNativeUi(elVideo);
+    prepareLiveAudioForPlayback(elVideo);
+    attachNodecastStatusPollingForPlayback();
+    armLiveStartupUi();
+    elNowPlaying.innerHTML = nowPlayingLiveMarkup(label);
+    elPlayerContainer.classList.toggle("player-container--live-tv", hideNativeProgressBar);
+    showPlayerChrome(true);
+    const transcoded = await createNodecastLiveTranscodeUrl(state.base, url, upstreamAuth);
+    if (requestId !== mediaPlaybackRequestId) return;
+    if (transcoded && liveSourceNeedsTranscode(url, label, liveTranscodeKey)) {
+      playUrl(transcoded, label, upstreamAuth, hideNativeProgressBar, false, liveTranscodeKey);
+      return;
+    }
+  }
+  playUrl(url, label, upstreamAuth, hideNativeProgressBar, true, liveTranscodeKey);
 }
 
 /** Lecteur VOD : `<video>` et instance HLS séparées du direct TV. */
@@ -7681,7 +7953,13 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
       return;
     }
     s.direct_source = resolved;
-    playUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders, hideLiveProgress);
+    await playLiveUrlWithAudioPolicy(
+      resolved,
+      displayChannelName(s.name),
+      state.nodecastAuthHeaders,
+      hideLiveProgress,
+      `nodecast:${s.nodecast_source_id ?? "source"}:${s.stream_id}`
+    );
     return;
   }
   const m3u8 = buildLiveStreamUrl(
@@ -7694,7 +7972,13 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
   if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
     return;
   }
-  playUrl(m3u8, displayChannelName(s.name), undefined, hideLiveProgress);
+  await playLiveUrlWithAudioPolicy(
+    m3u8,
+    displayChannelName(s.name),
+    undefined,
+    hideLiveProgress,
+    `xtream:${state.serverInfo.url}:${s.stream_id}`
+  );
 }
 
 async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void> {

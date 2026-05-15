@@ -796,6 +796,32 @@ export async function createNodecastVodTranscodeSession(
   return postNodecastVodTranscodeSession(nodecastBase, sourceUrl, headers, options);
 }
 
+export async function createNodecastLiveTranscodeUrl(
+  nodecastBase: string,
+  sourceUrl: string,
+  headers?: Record<string, string>
+): Promise<string | null> {
+  return createNodecastTranscodeUrl(nodecastBase, sourceUrl, headers);
+}
+
+export async function probeNodecastStreamCompatibility(
+  nodecastBase: string,
+  sourceUrl: string,
+  headers?: Record<string, string>
+): Promise<NodecastProbeResult | null> {
+  const upstreamUrl = innermostHttpStreamTarget(sourceUrl);
+  const cached = probeByUpstreamUrl.get(upstreamUrl);
+  if (cached) return cached;
+  const probe = await nodecastProbeUrl(nodecastBase, upstreamUrl, headers);
+  const payload = await fetchProxiedJsonWithInit<unknown>(probe, {
+    headers,
+    timeoutMs: TRANSCODE_PROBE_WARM_FETCH_MS,
+  });
+  const parsed = parseProbeResult(payload);
+  if (parsed) probeByUpstreamUrl.set(upstreamUrl, parsed);
+  return parsed;
+}
+
 async function postNodecastVodTranscodeSession(
   nodecastBase: string,
   sourceUrl: string,
