@@ -346,7 +346,20 @@
               ×
             </button>
             <div class="video-wrapper">
-              <video id="video" controls playsinline preload="auto" crossorigin="anonymous"></video>
+              <video
+                id="video"
+                playsinline
+                webkit-playsinline
+                x5-playsinline="true"
+                x5-video-player-type="h5-page"
+                x5-video-player-fullscreen="false"
+                x5-video-orientation="landscape"
+                controlslist="nofullscreen nodownload noplaybackrate noremoteplayback"
+                disablepictureinpicture
+                disableremoteplayback
+                preload="auto"
+                crossorigin="anonymous"
+              ></video>
               <div
                 id="player-buffering"
                 class="player-buffering hidden"
@@ -357,6 +370,22 @@
               >
                 <div class="player-buffering__spinner" aria-hidden="true"></div>
                 <span class="player-buffering__label">Chargement…</span>
+              </div>
+              <div id="live-controls-overlay" class="live-controls-overlay hidden" aria-hidden="true">
+                <div class="live-controls-row">
+                  <button id="live-ctl-play" type="button" class="live-ctl-btn" aria-label="Play"></button>
+                  <button id="live-ctl-mute" type="button" class="live-ctl-btn" aria-label="Mute"></button>
+                  <span class="live-ctl-status" aria-label="Live stream">
+                    <span class="live-ctl-status__dot" aria-hidden="true"></span>
+                    LIVE
+                  </span>
+                  <button
+                    id="live-ctl-fullscreen"
+                    type="button"
+                    class="live-ctl-btn"
+                    aria-label="Fullscreen landscape"
+                  ></button>
+                </div>
               </div>
             </div>
           </div>

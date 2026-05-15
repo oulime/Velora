@@ -58,6 +58,80 @@ function rowToJson(r: {
   };
 }
 
+function trialUsageResetKeysForIp(ip: string): string[] {
+  const keys = new Set<string>([ip]);
+  const lower = ip.toLowerCase();
+  if (
+    lower === "::1" ||
+    lower === "localhost" ||
+    ip === "127.0.0.1" ||
+    lower === "::ffff:127.0.0.1"
+  ) {
+    keys.add("::1");
+    keys.add("127.0.0.1");
+    keys.add("::ffff:127.0.0.1");
+    keys.add("localhost");
+  }
+  return [...keys];
+}
+
+async function resetTrialUsageForIp(
+  sb: ReturnType<typeof createSupabaseAdminClient>,
+  ip: string
+): Promise<void> {
+  const keys = trialUsageResetKeysForIp(ip);
+  const query = sb.from("trial_usage").delete();
+  const { error } =
+    keys.length === 1
+      ? await query.eq("ip_address", keys[0])
+      : await query.in("ip_address", keys);
+  if (error) throw error;
+}
+
+export async function handleAdminTrialReset(
+  req: IncomingMessage,
+  res: ServerResponse,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  if (!verifyAdminAccess(req, env)) {
+    sendJson(res, 401, { error: "Unauthorized" });
+    return;
+  }
+
+  const method = (req.method ?? "POST").toUpperCase();
+  if (method === "OPTIONS") {
+    res.statusCode = 204;
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Velora-Admin-Access, X-Admin-Access");
+    res.end();
+    return;
+  }
+  if (method !== "POST") {
+    sendJson(res, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  try {
+    const sb = createSupabaseAdminClient(env);
+    const ipAddress = detectClientIp(req);
+    await resetTrialUsageForIp(sb, ipAddress);
+    sendJson(res, 200, {
+      success: true,
+      ipAddress,
+      resetKeys: trialUsageResetKeysForIp(ipAddress),
+      trialReset: true,
+    });
+  } catch (e) {
+    if (e instanceof TrialConfigurationError) {
+      sendJson(res, 503, { error: e.message, code: "trial_config" });
+      return;
+    }
+    sendJson(res, 500, {
+      error: e instanceof Error ? e.message : "Server error",
+    });
+  }
+}
+
 export async function handleAdminTrialWhitelist(
   req: IncomingMessage,
   res: ServerResponse,
@@ -140,7 +214,8 @@ export async function handleAdminTrialWhitelist(
           .select("ip_address, label, notes, created_at, updated_at")
           .single();
         if (error) throw error;
-        sendJson(res, 200, { item: rowToJson(upd as Parameters<typeof rowToJson>[0]) });
+        await resetTrialUsageForIp(sb, ip);
+        sendJson(res, 200, { item: rowToJson(upd as Parameters<typeof rowToJson>[0]), trialReset: true });
         return;
       }
 
@@ -154,7 +229,8 @@ export async function handleAdminTrialWhitelist(
         .select("ip_address, label, notes, created_at, updated_at")
         .single();
       if (error) throw error;
-      sendJson(res, 200, { item: rowToJson(ins as Parameters<typeof rowToJson>[0]) });
+      await resetTrialUsageForIp(sb, ip);
+      sendJson(res, 200, { item: rowToJson(ins as Parameters<typeof rowToJson>[0]), trialReset: true });
       return;
     }
 
@@ -176,7 +252,9 @@ export async function handleAdminTrialWhitelist(
         .delete()
         .eq("ip_address", ip);
       if (error) throw error;
-      sendJson(res, 200, { success: true });
+      await resetTrialUsageForIp(sb, ip);
+
+      sendJson(res, 200, { success: true, trialReset: true });
       return;
     }
 

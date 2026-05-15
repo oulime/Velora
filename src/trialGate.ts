@@ -25,6 +25,7 @@ let verificationError = false;
 let trialBackendConfigError = false;
 /** Server flag: IP on admin whitelist — no countdown, no increment, no offer. */
 let trialWhitelisted = false;
+let trialTestMode = false;
 
 let badgeRoot: HTMLDivElement | null = null;
 let modalOverlay: HTMLDivElement | null = null;
@@ -63,7 +64,13 @@ async function requestTrialStatus(): Promise<
 > {
   let r: Response;
   try {
-    r = await fetch("/api/trial-status", { method: "GET", cache: "no-store" });
+    const headers: Record<string, string> = {};
+    if (trialTestMode) headers["X-Velora-Trial-Test"] = "1";
+    r = await fetch("/api/trial-status", {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    });
   } catch {
     logTrialFailureDev("trial-status", 0, { message: "network error" });
     return { ok: false, configError: false, status: 0, body: null };
@@ -93,8 +100,11 @@ async function requestTrialIncrement(): Promise<
 > {
   let r: Response;
   try {
+    const headers: Record<string, string> = {};
+    if (trialTestMode) headers["X-Velora-Trial-Test"] = "1";
     r = await fetch("/api/trial-increment", {
       method: "POST",
+      headers,
       cache: "no-store",
     });
   } catch {
@@ -120,6 +130,48 @@ async function requestTrialIncrement(): Promise<
   return { ok: true, payload: parsed as TrialStatusResponse };
 }
 
+function shouldResetTrialFromUrl(): boolean {
+  if (!isDev) return false;
+  try {
+    const u = new URL(window.location.href);
+    const v = u.searchParams.get("trial")?.trim().toLowerCase();
+    return v === "1" || v === "reset" || v === "test";
+  } catch {
+    return false;
+  }
+}
+
+async function requestAdminTrialReset(): Promise<void> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  const adminKey = (import.meta.env.VITE_ADMIN_ACCESS_KEY as string | undefined)?.trim();
+  if (adminKey) headers["X-Velora-Admin-Access"] = adminKey;
+
+  let r: Response;
+  try {
+    r = await fetch("/api/admin/trial-reset", {
+      method: "POST",
+      headers,
+      cache: "no-store",
+    });
+  } catch {
+    logTrialFailureDev("admin-trial-reset", 0, { message: "network error" });
+    return;
+  }
+  if (!r.ok) {
+    let parsed: unknown = null;
+    try {
+      const text = await r.text();
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    logTrialFailureDev("admin-trial-reset", r.status, parsed);
+  }
+}
+
 function pauseAllVideos(): void {
   for (const el of document.querySelectorAll("video")) {
     try {
@@ -140,7 +192,7 @@ function videosMeetPlayingGate(video: HTMLVideoElement): boolean {
 
 /** True when the server considers the IP's trial exhausted (sales offer, not config/network error). */
 function isTrialExpiredFromPayload(j: TrialStatusResponse): boolean {
-  if (j.whitelisted === true) return false;
+  if (!trialTestMode && j.whitelisted === true) return false;
   if (!j.allowed || j.secondsRemaining <= 0) return true;
   const lim = j.limitSeconds;
   return typeof lim === "number" && lim > 0 && j.secondsUsed >= lim;
@@ -148,10 +200,11 @@ function isTrialExpiredFromPayload(j: TrialStatusResponse): boolean {
 
 /** Only call after a successful 200 trial-status / increment payload. */
 function applyServerPayload(j: TrialStatusResponse): void {
-  trialWhitelisted = j.whitelisted === true;
+  trialWhitelisted = !trialTestMode && j.whitelisted === true;
   secondsRemaining = j.secondsRemaining;
   limitSeconds = j.limitSeconds;
   checkoutUrl = j.checkoutUrl || "/checkout";
+  localTicksSinceSync = 0;
 
   if (trialWhitelisted) {
     isBlocked = false;
@@ -202,7 +255,6 @@ function clearTimers(): void {
 function stopPlaybackAccounting(): void {
   clearTimers();
   isCounting = false;
-  localTicksSinceSync = 0;
   hideCountdownBadge();
 }
 
@@ -265,7 +317,7 @@ async function runTrialIncrement(): Promise<void> {
     }
     const j = result.payload;
     applyServerPayload(j);
-    if (j.whitelisted === true) {
+    if (trialWhitelisted) {
       return;
     }
     localTicksSinceSync = 0;
@@ -314,15 +366,9 @@ function startPlaybackAccounting(video: HTMLVideoElement): void {
     return;
   if (!videosMeetPlayingGate(video)) return;
 
-  const resumeFromBufferHold =
-    activeVideoElement === video && !isCounting;
-
   activeVideoElement = video;
   clearTimers();
   isCounting = true;
-  if (!resumeFromBufferHold) {
-    localTicksSinceSync = 0;
-  }
   showCountdownBadge();
   updateTrialCountdownUI();
 
@@ -558,6 +604,18 @@ export function initTrialGate(options?: { onTrialBlocked?: () => void }): void {
   ensureBadgeMounted();
 
   void (async () => {
+    trialTestMode = shouldResetTrialFromUrl();
+    if (trialTestMode) {
+      isBlocked = false;
+      verificationError = false;
+      trialBackendConfigError = false;
+      trialWhitelisted = false;
+      localTicksSinceSync = 0;
+      document.body.classList.remove("trial-locked");
+      modalOverlay?.classList.add("trial-modal-overlay--hidden");
+      await requestAdminTrialReset();
+    }
+
     const result = await requestTrialStatus();
     if (!result.ok) {
       if (result.configError) {

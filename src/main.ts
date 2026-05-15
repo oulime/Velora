@@ -128,6 +128,12 @@ const elVideo = $("#video") as HTMLVideoElement;
 const elVideoVod = document.getElementById("video-vod") as HTMLVideoElement | null;
 elVideo.preload = "auto";
 elVideo.crossOrigin = "anonymous";
+configureLiveNativeUi(elVideo);
+const elLiveVideoWrapper = elVideo.closest<HTMLElement>(".video-wrapper");
+const elLiveControlsOverlay = document.getElementById("live-controls-overlay") as HTMLDivElement | null;
+const elLiveCtlPlay = document.getElementById("live-ctl-play") as HTMLButtonElement | null;
+const elLiveCtlMute = document.getElementById("live-ctl-mute") as HTMLButtonElement | null;
+const elLiveCtlFullscreen = document.getElementById("live-ctl-fullscreen") as HTMLButtonElement | null;
 const VOD_VOLUME_LS_KEY = "velora_vod_volume_v1";
 
 function readPersistedVodVolume(): number {
@@ -997,6 +1003,7 @@ let lastVodUpstreamAuth: Record<string, string> | undefined;
 let vodRemountAttempts = 0;
 let vodLastRemountTs = 0;
 let vodPlaybackSessionId = 0;
+let liveManualFullscreenActive = false;
 let currentTranscodeSessionId: string | null = null;
 let currentVodSourceUrl: string | null = null;
 let currentVodStartAt = 0;
@@ -1057,6 +1064,140 @@ function setVodControlIcon(button: HTMLButtonElement | null, svgMarkup: string, 
   button.title = ariaLabel;
 }
 
+function setLiveControlIcon(button: HTMLButtonElement | null, svgMarkup: string, ariaLabel: string): void {
+  if (!button) return;
+  button.innerHTML = `<span class="live-ctl-icon">${svgMarkup}</span>`;
+  button.setAttribute("aria-label", ariaLabel);
+  button.title = ariaLabel;
+}
+
+function setLiveControlsVisible(visible: boolean): void {
+  if (!elLiveControlsOverlay) return;
+  elLiveControlsOverlay.classList.toggle("hidden", !visible);
+  elLiveControlsOverlay.setAttribute("aria-hidden", visible ? "false" : "true");
+}
+
+function lockLiveLandscapeOrientation(): void {
+  const orientation = screen.orientation as ScreenOrientation & {
+    lock?: (orientation: "landscape") => Promise<void>;
+  };
+  if (!orientation || typeof orientation.lock !== "function") return;
+  void orientation.lock("landscape").catch(() => {});
+}
+
+function unlockLiveLandscapeOrientation(): void {
+  const orientation = screen.orientation as ScreenOrientation & {
+    unlock?: () => void;
+  };
+  if (!orientation || typeof orientation.unlock !== "function") return;
+  try {
+    orientation.unlock();
+  } catch {
+    /* ignore unsupported orientation unlock */
+  }
+}
+
+function clearLiveManualFullscreen(): void {
+  liveManualFullscreenActive = false;
+  elPlayerContainer.classList.remove("player-container--live-fullscreen");
+  document.body.classList.remove("vel-live-fullscreen-active");
+  unlockLiveLandscapeOrientation();
+}
+
+function isLiveFullscreenActive(): boolean {
+  return Boolean(
+    (document.fullscreenElement && document.fullscreenElement === elPlayerContainer) ||
+      liveManualFullscreenActive
+  );
+}
+
+function syncLiveControlState(): void {
+  setLiveControlIcon(
+    elLiveCtlPlay,
+    elVideo.paused ? VOD_CONTROL_ICONS.play : VOD_CONTROL_ICONS.pause,
+    elVideo.paused ? "Play" : "Pause"
+  );
+  setLiveControlIcon(
+    elLiveCtlMute,
+    elVideo.muted ? VOD_CONTROL_ICONS.muted : VOD_CONTROL_ICONS.volume,
+    elVideo.muted ? "Unmute" : "Mute"
+  );
+  setLiveControlIcon(
+    elLiveCtlFullscreen,
+    isLiveFullscreenActive() ? VOD_CONTROL_ICONS.fullscreenExit : VOD_CONTROL_ICONS.fullscreen,
+    isLiveFullscreenActive() ? "Exit fullscreen" : "Fullscreen landscape"
+  );
+}
+
+function onLiveFullscreenChange(): void {
+  const inFullscreen = isLiveFullscreenActive();
+  const wasLiveFullscreen =
+    liveManualFullscreenActive ||
+    elPlayerContainer.classList.contains("player-container--live-fullscreen") ||
+    document.body.classList.contains("vel-live-fullscreen-active");
+  elPlayerContainer.classList.toggle("player-container--live-fullscreen", inFullscreen);
+  document.body.classList.toggle("vel-live-fullscreen-active", inFullscreen);
+  if (inFullscreen) lockLiveLandscapeOrientation();
+  else if (wasLiveFullscreen) clearLiveManualFullscreen();
+  syncLiveControlState();
+}
+
+async function toggleLiveFullscreen(): Promise<void> {
+  if (!isLiveFullscreenActive()) {
+    liveManualFullscreenActive = false;
+    try {
+      await elPlayerContainer.requestFullscreen?.();
+    } catch {
+      liveManualFullscreenActive = true;
+    }
+    if (!document.fullscreenElement && !liveManualFullscreenActive) {
+      liveManualFullscreenActive = true;
+    }
+    lockLiveLandscapeOrientation();
+    onLiveFullscreenChange();
+    return;
+  }
+  if (document.fullscreenElement === elPlayerContainer) {
+    await document.exitFullscreen?.().catch(() => {});
+  }
+  clearLiveManualFullscreen();
+  onLiveFullscreenChange();
+}
+
+function setupLiveControls(): void {
+  const onCtlPlay = (): void => {
+    if (elVideo.paused) {
+      if (isTrialBlocked()) {
+        showTrialExpiredModal();
+        return;
+      }
+      void elVideo.play().catch(() => {});
+    } else {
+      elVideo.pause();
+    }
+    syncLiveControlState();
+  };
+  const onCtlMute = (): void => {
+    elVideo.muted = !elVideo.muted;
+    syncLiveControlState();
+  };
+  const onCtlFullscreen = (): void => {
+    void toggleLiveFullscreen();
+  };
+  const stopLiveControlClick = (event: Event): void => {
+    event.stopPropagation();
+  };
+  elLiveCtlPlay?.addEventListener("click", onCtlPlay);
+  elLiveCtlMute?.addEventListener("click", onCtlMute);
+  elLiveCtlFullscreen?.addEventListener("click", onCtlFullscreen);
+  elLiveControlsOverlay?.addEventListener("click", stopLiveControlClick);
+  elVideo.addEventListener("play", syncLiveControlState);
+  elVideo.addEventListener("pause", syncLiveControlState);
+  elVideo.addEventListener("volumechange", syncLiveControlState);
+  document.addEventListener("fullscreenchange", onLiveFullscreenChange);
+  syncLiveControlState();
+}
+
 function setVodSeekVisualPercent(percentRaw: number): void {
   if (!elVodCtlSeekFill || !elVodCtlSeekHandle || !elVodCtlSeekTrack) return;
   const percent = Math.max(0, Math.min(1, percentRaw));
@@ -1077,6 +1218,30 @@ function lockDownVodNativeUi(video: HTMLVideoElement): void {
   video.setAttribute("x5-video-orientation", "landscape");
   video.setAttribute("controlslist", "nofullscreen nodownload noremoteplayback noplaybackrate");
   video.setAttribute("disablepictureinpicture", "");
+  try {
+    video.disablePictureInPicture = true;
+  } catch {
+    /* ignore unsupported PiP flag */
+  }
+  try {
+    video.disableRemotePlayback = true;
+  } catch {
+    /* ignore unsupported remote playback flag */
+  }
+}
+
+function configureLiveNativeUi(video: HTMLVideoElement): void {
+  video.controls = false;
+  video.removeAttribute("controls");
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.setAttribute("x5-playsinline", "true");
+  video.setAttribute("x5-video-player-type", "h5-page");
+  video.setAttribute("x5-video-player-fullscreen", "false");
+  video.setAttribute("x5-video-orientation", "landscape");
+  video.setAttribute("controlslist", "nofullscreen nodownload noplaybackrate noremoteplayback");
+  video.setAttribute("disablepictureinpicture", "");
+  video.setAttribute("disableremoteplayback", "");
   try {
     video.disablePictureInPicture = true;
   } catch {
@@ -2338,6 +2503,9 @@ function showPlayerChrome(show: boolean): void {
   elPlayerContainer.setAttribute("aria-hidden", show ? "false" : "true");
   elNowPlaying.classList.toggle("hidden", !show);
   elNowPlaying.setAttribute("aria-hidden", show ? "false" : "true");
+  setLiveControlsVisible(show);
+  if (!show) clearLiveManualFullscreen();
+  syncLiveControlState();
   if (show && !wasVisible) {
     veloraPushNavigationState("player-live");
   }
@@ -2483,6 +2651,7 @@ function teardownPlaybackMedia(): void {
   elVideo.removeAttribute("src");
   elVideo.removeAttribute("title");
   elVideo.load();
+  configureLiveNativeUi(elVideo);
   elPlayerContainer.classList.remove("player-container--live-tv");
 }
 
@@ -2655,6 +2824,7 @@ function playUrl(
   }
   destroyVodPlayer();
   teardownPlaybackMedia();
+  configureLiveNativeUi(elVideo);
   attachNodecastStatusPollingForPlayback();
   armLiveStartupUi();
   const proxied = proxiedUrl(url);
@@ -7484,8 +7654,11 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
     };
 
     await fetchAndApplyCanonicalCountries();
-    await fetchAndApplyChannelNamePrefixes();
-    await fetchAndApplyChannelHideNeedles();
+    const postHomeSetupPromise = Promise.allSettled([
+      fetchAndApplyChannelNamePrefixes(),
+      fetchAndApplyChannelHideNeedles(),
+    ]);
+    await refreshSupabaseHierarchy();
     adminConfig = buildProviderAdminConfig(nodecast.categories, streamsByCat);
     vodAdminConfig = buildProviderAdminConfig(nodecast.vodCategories, nodecast.vodStreamsByCat);
     seriesAdminConfig = buildProviderAdminConfig(nodecast.seriesCategories, nodecast.seriesStreamsByCat);
@@ -7496,8 +7669,6 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
       nodecast.seriesStreamsByCat,
       seriesAdminConfig
     );
-    await refreshSupabaseHierarchy();
-
     nodecastVodCatalogFetchError = null;
     nodecastSeriesCatalogFetchError = null;
 
@@ -7535,6 +7706,18 @@ async function connect(opts?: { skipMediaRouteRestore?: boolean }): Promise<void
     });
     if (!routeOk) goLiveHome();
     warmSelectedCountryMediaCatalogsInBackground();
+    void postHomeSetupPromise.then(() => {
+      if (!state) return;
+      populateCountrySelectFromAdmin();
+      if (uiShell === "packages") {
+        schedulePackagesGridRender();
+      } else if (uiAdminPackageId != null) {
+        renderPackageChannelList();
+      }
+      syncAdminSettingsButton();
+      persistVeloraNodecastSnapshot();
+      persistVeloraUiRoute();
+    });
     elLoginPanel.classList.add("hidden");
     elMain.classList.remove("hidden");
     ensureVeloraHistoryRootMarker();
@@ -7726,6 +7909,8 @@ if (envAutoConnectConfigured()) {
 /** Click on the picture (not the native control bar) toggles play / pause. */
 function toggleVideoPlayPause(ev: MouseEvent): void {
   if (!hls && !elVideo.src && !elVideo.currentSrc) return;
+  const target = ev.target as Element | null;
+  if (target?.closest("#live-controls-overlay")) return;
   const r = elVideo.getBoundingClientRect();
   const y = ev.clientY - r.top;
   const controlsReservePx = 52;
@@ -7740,7 +7925,9 @@ function toggleVideoPlayPause(ev: MouseEvent): void {
   } else elVideo.pause();
 }
 
+setupLiveControls();
 elVideo.addEventListener("click", toggleVideoPlayPause);
+elLiveVideoWrapper?.addEventListener("click", toggleVideoPlayPause);
 
 function toggleVideoPlayPauseVod(ev: MouseEvent): void {
   if (!elVideoVod) return;

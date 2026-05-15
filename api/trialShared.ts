@@ -39,6 +39,23 @@ function headerFirst(req: IncomingMessage, name: string): string {
   return typeof s === "string" ? s.trim() : "";
 }
 
+function isLocalRequest(req: IncomingMessage): boolean {
+  const rawHost = headerFirst(req, "host").trim().toLowerCase();
+  const host = rawHost.startsWith("[")
+    ? rawHost.slice(0, rawHost.indexOf("]") + 1)
+    : rawHost.split(":")[0]?.trim();
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]"
+  );
+}
+
+function isTrialTestModeRequest(req: IncomingMessage): boolean {
+  return headerFirst(req, "x-velora-trial-test") === "1" && isLocalRequest(req);
+}
+
 function normalizeIp(raw: string): string {
   const t = raw.trim();
   if (t.startsWith("::ffff:")) return t.slice(7);
@@ -225,7 +242,7 @@ export async function handleTrialStatus(
   }
   try {
     const ip = detectClientIp(req);
-    if (await isTrialIpWhitelisted(ip, env)) {
+    if (!isTrialTestModeRequest(req) && await isTrialIpWhitelisted(ip, env)) {
       sendJson(res, 200, buildWhitelistedTrialResponse(env));
       return;
     }
@@ -254,7 +271,7 @@ export async function handleTrialIncrement(
   }
   try {
     const ip = detectClientIp(req);
-    if (await isTrialIpWhitelisted(ip, env)) {
+    if (!isTrialTestModeRequest(req) && await isTrialIpWhitelisted(ip, env)) {
       sendJson(res, 200, buildWhitelistedTrialResponse(env));
       return;
     }

@@ -23,6 +23,7 @@ import { fromBase64UrlUtf8, proxiedFullUrl } from "./api/proxyParamTransport";
 import { handleTrialIncrement, handleTrialStatus } from "./api/trialShared";
 import {
   handleAdminMyIp,
+  handleAdminTrialReset,
   handleAdminTrialWhitelist,
 } from "./api/adminTrialWhitelistShared";
 import { ensureProxyTrialAllowsRequest } from "./api/proxyTrialGate";
@@ -781,6 +782,10 @@ export default defineConfig(({ mode }) => {
             void handleAdminTrialWhitelist(req, res, merged);
             return;
           }
+          if (pathOnly === "/api/admin/trial-reset") {
+            void handleAdminTrialReset(req, res, merged);
+            return;
+          }
           if (pathOnly === "/api/admin/my-ip" && req.method === "GET") {
             void handleAdminMyIp(req, res, merged);
             return;
@@ -805,6 +810,10 @@ export default defineConfig(({ mode }) => {
           }
           if (pathOnly === "/api/admin/trial-whitelist") {
             void handleAdminTrialWhitelist(req, res, merged);
+            return;
+          }
+          if (pathOnly === "/api/admin/trial-reset") {
+            void handleAdminTrialReset(req, res, merged);
             return;
           }
           if (pathOnly === "/api/admin/my-ip" && req.method === "GET") {
