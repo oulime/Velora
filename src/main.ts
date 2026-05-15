@@ -948,6 +948,8 @@ let hlsVod: Hls | null = null;
 let primaryPlaybackKeepAliveCleanup: (() => void) | null = null;
 let nodecastStatusPollingCleanup: (() => void) | null = null;
 let liveStartupUiCleanup: (() => void) | null = null;
+let mediaPlaybackRequestId = 0;
+let livePlaybackSessionId = 0;
 const NODECAST_STATUS_POLL_MS = 3000;
 const NODECAST_STATUS_STARTUP_DELAY_MS = 8000;
 
@@ -1374,6 +1376,32 @@ function teardownVodPlaybackHelpers(): void {
   }
 }
 
+function prepareLiveAudioForPlayback(video: HTMLVideoElement): void {
+  video.muted = false;
+  if (!Number.isFinite(video.volume) || video.volume <= 0) {
+    video.volume = 1;
+  }
+}
+
+function ensureHlsAudioTrack(instance: Hls): void {
+  const tracks = instance.audioTracks;
+  if (!Array.isArray(tracks) || tracks.length === 0) return;
+  if (instance.audioTrack >= 0) return;
+  const defaultIndex = tracks.findIndex((track) => track.default);
+  instance.audioTrack = defaultIndex >= 0 ? defaultIndex : 0;
+}
+
+function stopCurrentVodTranscodeSession(): void {
+  const sessionId = currentTranscodeSessionId;
+  const base = state?.base;
+  if (!sessionId || !base) return;
+  const delUrl = `${base.replace(/\/+$/, "")}/api/transcode/${encodeURIComponent(sessionId)}`;
+  void fetch(proxiedUrl(delUrl), {
+    method: "DELETE",
+    headers: state?.nodecastAuthHeaders,
+  }).catch(() => {});
+}
+
 /** Start playback with sound after user gesture ; muted fallback only if autoplay refuses unmuted playback. */
 function playVodAggressive(video: HTMLVideoElement): void {
   prepareVodAudioForPlayback(video);
@@ -1491,6 +1519,7 @@ function mountHlsVod(
   upstreamAuth: Record<string, string> | undefined,
   opts?: { resumeAt?: number; autoPlayOnManifest?: boolean }
 ): void {
+  const sessionId = vodPlaybackSessionId;
   if (hlsVod) {
     try {
       hlsVod.destroy();
@@ -1499,7 +1528,7 @@ function mountHlsVod(
     }
     hlsVod = null;
   }
-  hlsVod = new Hls({
+  const hlsVodInstance = new Hls({
     ...HLS_VOD_CONFIG_BASE,
     // More stable long playback for Nodecast-style transcode playlists.
     lowLatencyMode: false,
@@ -1507,15 +1536,18 @@ function mountHlsVod(
       vodHlsXhrSetup(xhr, url, upstreamAuth);
     },
   });
-  hlsVod.loadSource(proxied);
-  hlsVod.attachMedia(video);
+  hlsVod = hlsVodInstance;
+  hlsVodInstance.loadSource(proxied);
+  hlsVodInstance.attachMedia(video);
   try {
-    hlsVod.startLoad(-1);
+    hlsVodInstance.startLoad(-1);
   } catch {
     /* ignore */
   }
 
-  hlsVod.on(Hls.Events.MANIFEST_PARSED, () => {
+  hlsVodInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+    if (sessionId !== vodPlaybackSessionId || hlsVod !== hlsVodInstance) return;
+    ensureHlsAudioTrack(hlsVodInstance);
     const resumeAt = opts?.resumeAt;
     if (resumeAt != null && Number.isFinite(resumeAt) && resumeAt > 0) {
       try {
@@ -1525,7 +1557,7 @@ function mountHlsVod(
       }
     }
     try {
-      hlsVod?.startLoad(-1);
+      hlsVodInstance.startLoad(-1);
     } catch {
       /* ignore */
     }
@@ -1534,11 +1566,17 @@ function mountHlsVod(
     }
   });
 
-  hlsVod.on(Hls.Events.ERROR, (_e, data: ErrorData) => {
+  hlsVodInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+    if (sessionId !== vodPlaybackSessionId || hlsVod !== hlsVodInstance) return;
+    ensureHlsAudioTrack(hlsVodInstance);
+  });
+
+  hlsVodInstance.on(Hls.Events.ERROR, (_e, data: ErrorData) => {
+    if (sessionId !== vodPlaybackSessionId || hlsVod !== hlsVodInstance) return;
     if (!data.fatal) return;
     if (data.type === ErrorTypes.MEDIA_ERROR) {
       try {
-        hlsVod?.recoverMediaError();
+        hlsVodInstance.recoverMediaError();
         return;
       } catch {
         /* fall through */
@@ -1547,7 +1585,7 @@ function mountHlsVod(
     // Force HLS to retry loading segments on transient network errors.
     if (data.type === ErrorTypes.NETWORK_ERROR) {
       try {
-        hlsVod?.startLoad(-1);
+        hlsVodInstance.startLoad(-1);
         return;
       } catch {
         /* ignore */
@@ -2631,6 +2669,7 @@ function armLiveStartupUi(): void {
 
 /** Stop HLS / native playback without hiding the player shell (used when switching stream). */
 function teardownPlaybackMedia(): void {
+  livePlaybackSessionId += 1;
   markPlaybackStopped(elVideo);
   liveStartupUiCleanup?.();
   liveStartupUiCleanup = null;
@@ -2639,7 +2678,21 @@ function teardownPlaybackMedia(): void {
   nodecastStatusPollingCleanup?.();
   nodecastStatusPollingCleanup = null;
   if (hls) {
-    hls.destroy();
+    try {
+      hls.stopLoad();
+    } catch {
+      /* ignore */
+    }
+    try {
+      hls.detachMedia();
+    } catch {
+      /* ignore */
+    }
+    try {
+      hls.destroy();
+    } catch {
+      /* ignore */
+    }
     hls = null;
   }
   elVideo.onerror = null;
@@ -2652,6 +2705,7 @@ function teardownPlaybackMedia(): void {
   elVideo.removeAttribute("title");
   elVideo.load();
   configureLiveNativeUi(elVideo);
+  syncLiveControlState();
   elPlayerContainer.classList.remove("player-container--live-tv");
 }
 
@@ -2690,11 +2744,12 @@ function attachNodecastStatusPollingForPlayback(
 
 function attachPrimaryPlaybackKeepAlive(video: HTMLVideoElement): void {
   primaryPlaybackKeepAliveCleanup?.();
+  const keepAliveSessionId = livePlaybackSessionId;
   let lastBufferedEnd = 0;
   let lastBufferAdvanceTs = Date.now();
   let lastNudgeTs = 0;
   const forceHungryLoad = (): void => {
-    if (!hls) return;
+    if (!hls || keepAliveSessionId !== livePlaybackSessionId) return;
     try {
       hls.startLoad(-1);
     } catch {
@@ -2751,17 +2806,33 @@ function setVodPlayerBufferingVisible(visible: boolean): void {
 
 function teardownVodMedia(): void {
   if (!elVideoVod) return;
+  vodPlaybackSessionId += 1;
   markPlaybackStopped(elVideoVod);
   nodecastStatusPollingCleanup?.();
   nodecastStatusPollingCleanup = null;
   teardownVodPlaybackHelpers();
+  stopCurrentVodTranscodeSession();
   vodRemountAttempts = 0;
   vodLastRemountTs = 0;
   lastVodProxiedUrl = null;
   lastVodUpstreamAuth = undefined;
   resetVodTranscodeState();
   if (hlsVod) {
-    hlsVod.destroy();
+    try {
+      hlsVod.stopLoad();
+    } catch {
+      /* ignore */
+    }
+    try {
+      hlsVod.detachMedia();
+    } catch {
+      /* ignore */
+    }
+    try {
+      hlsVod.destroy();
+    } catch {
+      /* ignore */
+    }
     hlsVod = null;
   }
   elVideoVod.onerror = null;
@@ -2824,7 +2895,9 @@ function playUrl(
   }
   destroyVodPlayer();
   teardownPlaybackMedia();
+  const sessionId = ++livePlaybackSessionId;
   configureLiveNativeUi(elVideo);
+  prepareLiveAudioForPlayback(elVideo);
   attachNodecastStatusPollingForPlayback();
   armLiveStartupUi();
   const proxied = proxiedUrl(url);
@@ -2843,12 +2916,14 @@ function playUrl(
   );
 
   if (urlLooksLikeProgressiveMedia(url) || urlLooksLikeProgressiveMedia(proxied)) {
+    if (sessionId !== livePlaybackSessionId) return;
     elVideo.src = proxied;
     elVideo.onerror = () => {
       elNowPlaying.innerHTML = nowPlayingErrorMarkup(
         "Lecture impossible (codec non pris en charge ou flux refusé)."
       );
     };
+    prepareLiveAudioForPlayback(elVideo);
     void elVideo.play().catch(() => {});
     return;
   }
@@ -2859,13 +2934,15 @@ function playUrl(
     !hasUpstreamAuth &&
     urlLooksLikeHls(url)
   ) {
+    if (sessionId !== livePlaybackSessionId) return;
     elVideo.src = proxied;
+    prepareLiveAudioForPlayback(elVideo);
     void elVideo.play().catch(() => {});
     return;
   }
 
   if (Hls.isSupported()) {
-    hls = new Hls({
+    const hlsInstance = new Hls({
       enableWorker: true,
       lowLatencyMode: false,
       testBandwidth: false,
@@ -2897,17 +2974,26 @@ function playUrl(
         }
       },
     });
-    hls.loadSource(proxied);
-    hls.attachMedia(elVideo);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    hls = hlsInstance;
+    hlsInstance.loadSource(proxied);
+    hlsInstance.attachMedia(elVideo);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
+      ensureHlsAudioTrack(hlsInstance);
       attachPrimaryPlaybackKeepAlive(elVideo);
+      prepareLiveAudioForPlayback(elVideo);
       void elVideo.play().catch(() => {});
     });
-    hls.on(Hls.Events.ERROR, (_e, data) => {
+    hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+      if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
+      ensureHlsAudioTrack(hlsInstance);
+    });
+    hlsInstance.on(Hls.Events.ERROR, (_e, data) => {
+      if (sessionId !== livePlaybackSessionId || hls !== hlsInstance) return;
       if (data.fatal) {
         if (data.type === ErrorTypes.NETWORK_ERROR) {
           try {
-            hls?.startLoad(-1);
+            hlsInstance.startLoad(-1);
             return;
           } catch {
             /* ignore */
@@ -2915,7 +3001,7 @@ function playUrl(
         }
         if (data.type === ErrorTypes.MEDIA_ERROR) {
           try {
-            hls?.recoverMediaError();
+            hlsInstance.recoverMediaError();
             return;
           } catch {
             /* ignore */
@@ -2941,11 +3027,10 @@ function playVodUrl(url: string, label: string, upstreamAuth?: Record<string, st
     showTrialExpiredModal();
     return;
   }
-  vodPlaybackSessionId += 1;
-  const sessionId = vodPlaybackSessionId;
   setVodPlayerBufferingVisible(true);
   startVodFakeLoadingOverlay("Preparation du flux...");
   teardownVodMedia();
+  const sessionId = ++vodPlaybackSessionId;
   attachNodecastStatusPollingForPlayback();
   elVideoVod.preload = "metadata";
   elVideoVod.crossOrigin = "anonymous";
@@ -6238,6 +6323,7 @@ function openAdminPackage(packageId: string, restore?: OpenAdminPackageRestore):
     }
   }
   activeStreamId = null;
+  destroyPlayer();
   destroyVodPlayer();
   uiShell = "content";
   uiTab = tab;
@@ -7456,17 +7542,30 @@ function onTabClick(tab: UiTab): void {
 
 async function playStreamByMode(s: LiveStream): Promise<void> {
   if (!state) return;
+  const playbackRequestId = ++mediaPlaybackRequestId;
+  const isVodFilm = s.nodecast_media === "vod";
+  const hideLiveProgress = !isVodFilm && s.nodecast_media !== "series";
+  if (isVodFilm) {
+    destroyPlayer();
+    teardownVodMedia();
+  } else {
+    destroyVodPlayer();
+    teardownPlaybackMedia();
+  }
   const trialOk = await canStartPlayback();
+  if (playbackRequestId !== mediaPlaybackRequestId) return;
   if (!trialOk) {
     showTrialExpiredModal();
     return;
   }
-  const isVodFilm = s.nodecast_media === "vod";
-  const hideLiveProgress = !isVodFilm && s.nodecast_media !== "series";
 
   if (state.mode === "nodecast") {
     if (isVodFilm) {
       showVodPlayerChrome(true);
+      setVodPlayerBufferingVisible(true);
+      startVodFakeLoadingOverlay(
+        s.nodecast_series_episode ? "Préparation de l’épisode…" : "Préparation du film…"
+      );
       if (elNowPlayingVod) {
         elNowPlayingVod.innerHTML = nowPlayingLiveMarkup(displayChannelName(s.name));
       }
@@ -7475,6 +7574,9 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
         resolved = await resolveNodecastVodStreamUrl(state.base, s, state.nodecastAuthHeaders);
       } catch {
         resolved = null;
+      }
+      if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
+        return;
       }
       if (!resolved) {
         setVodPlayerBufferingVisible(false);
@@ -7521,15 +7623,16 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
         }
         return;
       }
+      if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
+        return;
+      }
       s.direct_source = resolved;
-      applyVodTranscodeSessionMeta(getNodecastTranscodeSessionMeta(resolved));
       playVodUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders);
       syncSeriesEpisodePlaybackHighlight();
       smoothVeloraMainScrollTop();
       return;
     }
 
-    teardownPlaybackMedia();
     if (hideLiveProgress) {
       elPlayerContainer.classList.add("player-container--live-tv");
     } else {
@@ -7547,6 +7650,9 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
       );
     } else {
       resolved = await resolveNodecastStreamUrl(state.base, s, state.nodecastAuthHeaders);
+    }
+    if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
+      return;
     }
     if (!resolved) {
       elNowPlaying.innerHTML = nowPlayingErrorMarkup(
@@ -7571,6 +7677,9 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
         return;
       }
     }
+    if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
+      return;
+    }
     s.direct_source = resolved;
     playUrl(resolved, displayChannelName(s.name), state.nodecastAuthHeaders, hideLiveProgress);
     return;
@@ -7582,6 +7691,9 @@ async function playStreamByMode(s: LiveStream): Promise<void> {
     s.stream_id,
     "m3u8"
   );
+  if (playbackRequestId !== mediaPlaybackRequestId || activeStreamId !== s.stream_id) {
+    return;
+  }
   playUrl(m3u8, displayChannelName(s.name), undefined, hideLiveProgress);
 }
 
