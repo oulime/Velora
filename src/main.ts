@@ -352,6 +352,449 @@ const ADMIN_GRID_TOOLS_KEY = "velora_admin_grid_tools";
 /** Same id as `providerLayout` « Autres » bucket — keep last in the list. */
 const OTHER_COUNTRY_ID = "country__other";
 
+type TvDirection = "up" | "down" | "left" | "right";
+
+const TV_MODE_STORAGE_KEY = "velora_tv_mode";
+const TV_FOCUS_CLASS = "velora-tv-focus";
+const TV_FOCUSABLE_SELECTOR = [
+  "button",
+  "a[href]",
+  "select",
+  "textarea",
+  "input:not([type='hidden'])",
+  "[role='button']",
+  "[role='tab']",
+  "[role='slider']",
+  "[tabindex]",
+  "[data-tv-focusable='true']",
+].join(",");
+
+let tvNavigationEnabled = false;
+let tvFocusMutationObserver: MutationObserver | null = null;
+let tvSelectMenuEl: HTMLDivElement | null = null;
+let tvFocusRefreshPending = false;
+
+function readTvModeRequested(): boolean {
+  try {
+    const params = new URL(window.location.href).searchParams;
+    const tvParam = params.get("tv")?.trim();
+    if (tvParam === "1") {
+      window.localStorage.setItem(TV_MODE_STORAGE_KEY, "1");
+      return true;
+    }
+    if (tvParam === "0") {
+      window.localStorage.removeItem(TV_MODE_STORAGE_KEY);
+      return false;
+    }
+    return window.localStorage.getItem(TV_MODE_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markTvFocusable(el: HTMLElement): void {
+  el.dataset.tvFocusable = "true";
+  if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+}
+
+function isElementActuallyVisible(el: HTMLElement): boolean {
+  if (el.closest("[hidden], .hidden, [inert]")) return false;
+  if (el.closest("[aria-hidden='true']") && !el.closest("dialog[open]")) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function isTvFocusableElement(el: HTMLElement): boolean {
+  if (!isElementActuallyVisible(el)) return false;
+  if (el.matches("button, input, select, textarea") && (el as HTMLButtonElement | HTMLInputElement).disabled) {
+    return false;
+  }
+  const tabIndexAttr = el.getAttribute("tabindex");
+  if (tabIndexAttr != null && Number(tabIndexAttr) < 0 && el.dataset.tvFocusable !== "true") return false;
+  return true;
+}
+
+function isWithinTvNavigationWindow(el: HTMLElement): boolean {
+  if (tvSelectMenuEl && tvSelectMenuEl.contains(el)) return true;
+  const rect = el.getBoundingClientRect();
+  const yMargin = window.innerHeight * 0.75;
+  const xMargin = window.innerWidth * 0.45;
+  return (
+    rect.bottom >= -yMargin &&
+    rect.top <= window.innerHeight + yMargin &&
+    rect.right >= -xMargin &&
+    rect.left <= window.innerWidth + xMargin
+  );
+}
+
+function tvFocusScopeRoot(): ParentNode {
+  if (tvSelectMenuEl && isElementActuallyVisible(tvSelectMenuEl)) return tvSelectMenuEl;
+  const dialogs = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].filter(isElementActuallyVisible);
+  if (dialogs.length > 0) return dialogs[dialogs.length - 1];
+  const trialOverlay = document.querySelector<HTMLElement>(
+    ".trial-modal-overlay:not(.trial-modal-overlay--hidden), .trial-offer-overlay:not(.trial-modal-overlay--hidden)"
+  );
+  if (trialOverlay && isElementActuallyVisible(trialOverlay)) return trialOverlay;
+  return document;
+}
+
+function getTvFocusableElements(): HTMLElement[] {
+  const scope = tvFocusScopeRoot();
+  const elements = [...scope.querySelectorAll<HTMLElement>(TV_FOCUSABLE_SELECTOR)];
+  const unique = [...new Set(elements)];
+  return unique.filter((el) => isTvFocusableElement(el) && isWithinTvNavigationWindow(el));
+}
+
+function clearTvFocusClass(): void {
+  document.querySelectorAll(`.${TV_FOCUS_CLASS}`).forEach((el) => el.classList.remove(TV_FOCUS_CLASS));
+}
+
+function setTvFocus(el: HTMLElement, scroll = true): void {
+  if (!isTvFocusableElement(el)) return;
+  clearTvFocusClass();
+  el.classList.add(TV_FOCUS_CLASS);
+  el.focus({ preventScroll: true });
+  if (scroll) {
+    const block = el.closest("#packages-view, #dynamic-list") ? "center" : "nearest";
+    el.scrollIntoView({ block, inline: "nearest", behavior: "auto" });
+  }
+}
+
+function getCurrentTvFocus(candidates = getTvFocusableElements()): HTMLElement | null {
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (active && candidates.includes(active) && isTvFocusableElement(active)) return active;
+  const marked = document.querySelector<HTMLElement>(`.${TV_FOCUS_CLASS}`);
+  if (marked && candidates.includes(marked) && isTvFocusableElement(marked)) return marked;
+  return null;
+}
+
+function ensureTvFocus(): HTMLElement | null {
+  const candidates = getTvFocusableElements();
+  const current = getCurrentTvFocus(candidates);
+  if (current) {
+    current.classList.add(TV_FOCUS_CLASS);
+    return current;
+  }
+  const first = candidates[0] ?? null;
+  if (first) setTvFocus(first, false);
+  return first;
+}
+
+function tvRectCenter(rect: DOMRect): { x: number; y: number } {
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  };
+}
+
+function directionalPrimaryDistance(from: DOMRect, to: DOMRect, direction: TvDirection): number {
+  if (direction === "right") return Math.max(0, to.left - from.right);
+  if (direction === "left") return Math.max(0, from.left - to.right);
+  if (direction === "down") return Math.max(0, to.top - from.bottom);
+  return Math.max(0, from.top - to.bottom);
+}
+
+function perpendicularOverlap(from: DOMRect, to: DOMRect, direction: TvDirection): number {
+  if (direction === "left" || direction === "right") {
+    return Math.max(0, Math.min(from.bottom, to.bottom) - Math.max(from.top, to.top));
+  }
+  return Math.max(0, Math.min(from.right, to.right) - Math.max(from.left, to.left));
+}
+
+function tvNavigationGroup(el: HTMLElement): HTMLElement | null {
+  return el.closest<HTMLElement>(
+    [
+      ".velora-tv-select-menu",
+      ".vod-controls-row",
+      ".live-controls-row",
+      "#dynamic-list",
+      "#packages-view",
+      "#cat-pills",
+      "#main-tabs",
+      ".vel-header",
+    ].join(",")
+  );
+}
+
+function moveTvFocus(direction: TvDirection): void {
+  const candidates = getTvFocusableElements();
+  if (candidates.length === 0) return;
+  const current = getCurrentTvFocus(candidates) ?? candidates[0];
+  if (!current) return;
+  const currentRect = current.getBoundingClientRect();
+  const currentCenter = tvRectCenter(currentRect);
+  const ranked: Array<{ el: HTMLElement; score: number; inBeam: boolean }> = [];
+
+  for (const el of candidates) {
+    if (el === current) continue;
+    const rect = el.getBoundingClientRect();
+    const center = tvRectCenter(rect);
+    const dx = center.x - currentCenter.x;
+    const dy = center.y - currentCenter.y;
+    const moving =
+      (direction === "right" && dx > 3) ||
+      (direction === "left" && dx < -3) ||
+      (direction === "down" && dy > 3) ||
+      (direction === "up" && dy < -3);
+    if (!moving) continue;
+
+    const primary = directionalPrimaryDistance(currentRect, rect, direction);
+    const secondary = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx);
+    const overlap = perpendicularOverlap(currentRect, rect, direction);
+    const minBeamOverlap =
+      direction === "left" || direction === "right"
+        ? Math.min(currentRect.height, rect.height) * 0.34
+        : Math.min(currentRect.width, rect.width) * 0.34;
+    const inBeam =
+      direction === "left" || direction === "right"
+        ? overlap >= Math.max(14, minBeamOverlap) &&
+          secondary <= Math.min(currentRect.height, rect.height) * 0.65
+        : overlap >= Math.max(8, minBeamOverlap);
+    const score = primary * 1000 + secondary * (inBeam ? 3 : 14) - overlap * 8;
+    ranked.push({ el, score, inBeam });
+  }
+
+  const beam = ranked.filter((item) => item.inBeam);
+  if ((direction === "up" || direction === "down") && current.closest("#dynamic-list, #packages-view")) {
+    const currentGroup = tvNavigationGroup(current);
+    const sameGroup = ranked.filter((item) => tvNavigationGroup(item.el) === currentGroup);
+    const sameGroupBeam = sameGroup.filter((item) => item.inBeam);
+    const pool = sameGroupBeam.length > 0 ? sameGroupBeam : sameGroup;
+    if (pool.length > 0) {
+      const best = pool.sort((a, b) => a.score - b.score)[0];
+      setTvFocus(best.el);
+      return;
+    }
+  }
+  if ((direction === "left" || direction === "right") && beam.length === 0) {
+    setTvFocus(current);
+    return;
+  }
+  const pool = beam.length > 0 ? beam : ranked;
+  const best = pool.sort((a, b) => a.score - b.score)[0];
+  setTvFocus(best?.el ?? current);
+}
+
+function closeTvSelectMenu(): boolean {
+  if (!tvSelectMenuEl) return false;
+  const hadMenu = tvSelectMenuEl.isConnected;
+  tvSelectMenuEl.remove();
+  tvSelectMenuEl = null;
+  return hadMenu;
+}
+
+function openTvSelectMenu(select: HTMLSelectElement): void {
+  closeTvSelectMenu();
+  const menu = document.createElement("div");
+  menu.className = "velora-tv-select-menu";
+  menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-label", select.getAttribute("aria-label") || "Choisir une option");
+
+  const rect = select.getBoundingClientRect();
+  const maxHeight = Math.min(420, Math.max(180, window.innerHeight - rect.bottom - 16));
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+  menu.style.top = `${Math.min(rect.bottom + 8, window.innerHeight - maxHeight - 8)}px`;
+  menu.style.width = `${Math.max(rect.width, 220)}px`;
+  menu.style.maxHeight = `${maxHeight}px`;
+
+  const selectedValue = select.value;
+  let selectedButton: HTMLButtonElement | null = null;
+  for (const option of [...select.options]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "velora-tv-select-option";
+    btn.dataset.tvFocusable = "true";
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", option.value === selectedValue ? "true" : "false");
+    btn.textContent = option.textContent || option.value;
+    btn.addEventListener("click", () => {
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      closeTvSelectMenu();
+      setTvFocus(select);
+    });
+    if (option.value === selectedValue) selectedButton = btn;
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+  tvSelectMenuEl = menu;
+  syncTvFocusableMetadata(menu);
+  setTvFocus(selectedButton ?? menu.querySelector<HTMLElement>(".velora-tv-select-option") ?? select);
+}
+
+function clickCurrentTvFocus(): void {
+  const current = ensureTvFocus();
+  if (!current) return;
+  if (current instanceof HTMLSelectElement) {
+    openTvSelectMenu(current);
+    return;
+  }
+  current.click();
+}
+
+function closeTopTvDialog(): boolean {
+  const dialogs = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].filter(isElementActuallyVisible);
+  const dialog = dialogs[dialogs.length - 1];
+  if (!dialog) return false;
+  const closeButton = dialog.querySelector<HTMLElement>(
+    [
+      "[data-tv-close='true']",
+      "[id*='cancel' i]",
+      "[id*='close' i]",
+      "[id*='no' i]",
+      "button[aria-label*='fermer' i]",
+      "button[aria-label*='annuler' i]",
+      "button[value='cancel']",
+    ].join(",")
+  );
+  if (closeButton && isElementActuallyVisible(closeButton)) {
+    closeButton.click();
+  } else {
+    dialog.close();
+  }
+  return true;
+}
+
+function handleTvBackAction(): void {
+  if (closeTvSelectMenu()) return;
+  if (closeTopTvDialog()) return;
+  const trialOverlay = document.querySelector<HTMLElement>(".trial-modal-overlay:not(.trial-modal-overlay--hidden)");
+  if (trialOverlay && isElementActuallyVisible(trialOverlay) && !document.body.classList.contains("trial-locked")) {
+    trialOverlay.classList.add("trial-modal-overlay--hidden");
+    return;
+  }
+  if (!elPlayerContainer.classList.contains("hidden")) {
+    closePlayerUserAction();
+    return;
+  }
+  if (elVodPlayerContainer && !elVodPlayerContainer.classList.contains("hidden")) {
+    closeVodPlayerUserAction();
+    return;
+  }
+  if (uiShell === "content" || veloraUiHistoryDepth > 0) {
+    window.history.back();
+  }
+}
+
+function syncTvFocusableMetadata(root: ParentNode = document): void {
+  for (const el of root.querySelectorAll<HTMLElement>(
+    [
+      "#country-select",
+      "#main-tabs .tab",
+      "#btn-adult-portal",
+      "#btn-back-home",
+      "#btn-go-home",
+      "#btn-logo-home",
+      "#btn-settings",
+      "#btn-logout",
+      ".vel-package-card",
+      ".media-item",
+      ".vel-vod-movie-card",
+      ".vel-vod-detail__watch",
+      ".vel-vod-detail__episode",
+      ".vel-vod-detail__season-select",
+      ".cat-pill",
+      ".vel-adult-tab",
+      ".vel-player-dismiss-x",
+      ".live-ctl-btn",
+      ".vod-ctl-btn",
+      ".vod-ctl-seek-track",
+      ".trial-offer-highlight",
+      ".trial-offer-button",
+      ".trial-modal-button",
+      ".trial-expired-dialog__btn",
+      ".vel-global-pkg-confirm-dialog__btn",
+      ".admin-pkg-edit-sb",
+      ".admin-pkg-del-sb",
+      ".vel-media-item-tool",
+      ".velora-tv-select-option",
+    ].join(",")
+  )) {
+    markTvFocusable(el);
+  }
+}
+
+function refreshTvFocusSoon(): void {
+  if (!tvNavigationEnabled) return;
+  if (tvFocusRefreshPending) return;
+  tvFocusRefreshPending = true;
+  window.requestAnimationFrame(() => {
+    tvFocusRefreshPending = false;
+    syncTvFocusableMetadata();
+    const current = getCurrentTvFocus();
+    if (current) setTvFocus(current, false);
+  });
+}
+
+function initTvNavigation(): void {
+  tvNavigationEnabled = readTvModeRequested();
+  document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+  if (!tvNavigationEnabled) return;
+
+  syncTvFocusableMetadata();
+  tvFocusMutationObserver?.disconnect();
+  tvFocusMutationObserver = new MutationObserver(() => refreshTvFocusSoon());
+  tvFocusMutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "hidden", "aria-hidden", "disabled", "tabindex"],
+  });
+
+  document.addEventListener(
+    "focusin",
+    (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target || !isTvFocusableElement(target)) return;
+      clearTvFocusClass();
+      target.classList.add(TV_FOCUS_CLASS);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!tvNavigationEnabled || event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key;
+      if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        const direction: TvDirection =
+          key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : "right";
+        moveTvFocus(direction);
+        return;
+      }
+      if (key === "Enter" || key === "OK" || key === "Accept") {
+        event.preventDefault();
+        event.stopPropagation();
+        clickCurrentTvFocus();
+        return;
+      }
+      if (key === "Escape" || key === "Backspace" || key === "BrowserBack" || key === "GoBack") {
+        event.preventDefault();
+        event.stopPropagation();
+        handleTvBackAction();
+      }
+    },
+    true
+  );
+
+  window.addEventListener("storage", (event) => {
+    if (event.key !== TV_MODE_STORAGE_KEY) return;
+    tvNavigationEnabled = readTvModeRequested();
+    document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+    if (tvNavigationEnabled) refreshTvFocusSoon();
+  });
+
+  window.setTimeout(() => {
+    ensureTvFocus();
+  }, 0);
+}
+
 /** Entrées pushState Velora encore « actives » (package, fiche VOD, lecteur). */
 let veloraUiHistoryDepth = 0;
 let veloraIgnoreHistoryPopstate = false;
@@ -2226,6 +2669,9 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     onFullscreenChange();
   };
   let overlayIdleTimer: number | null = null;
+  const stopVodControlClick = (event: Event): void => {
+    event.stopPropagation();
+  };
   const markVodControlsActive = (): void => {
     if (!elVodControlsOverlay) return;
     elVodControlsOverlay.classList.remove("vod-controls-overlay--idle");
@@ -2252,6 +2698,7 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
   elVodVideoWrapper?.addEventListener("click", toggleVideoPlayPauseVod);
   elVodVideoWrapper?.addEventListener("pointermove", markVodControlsActive);
   elVodVideoWrapper?.addEventListener("touchstart", markVodControlsActive, { passive: true });
+  elVodControlsOverlay?.addEventListener("click", stopVodControlClick);
   elVodControlsOverlay?.addEventListener("pointermove", markVodControlsActive);
   document.addEventListener("fullscreenchange", onFullscreenChange);
   const onVolumeChange = (): void => {
@@ -2299,6 +2746,7 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     elVodVideoWrapper?.removeEventListener("click", toggleVideoPlayPauseVod);
     elVodVideoWrapper?.removeEventListener("pointermove", markVodControlsActive);
     elVodVideoWrapper?.removeEventListener("touchstart", markVodControlsActive);
+    elVodControlsOverlay?.removeEventListener("click", stopVodControlClick);
     elVodControlsOverlay?.removeEventListener("pointermove", markVodControlsActive);
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     video.removeEventListener("volumechange", onVolumeChange);
@@ -8286,6 +8734,7 @@ elAdultTabHome?.addEventListener("click", () => {
 elCountrySelect.addEventListener("change", onCountryChange);
 
 applyNodecastEnvDefaults();
+initTvNavigation();
 
 initTrialGate({
   onTrialBlocked: () => {

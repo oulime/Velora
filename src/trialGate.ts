@@ -469,7 +469,7 @@ function ensureModalMounted(): void {
           <p class="trial-offer-urgency">Aujourd’hui seulement</p>
           <h2 id="trial-offer-title" class="trial-offer-title">Débloquez l’accès illimité à VeloraVIP</h2>
           <p class="trial-offer-subtitle">Votre minute d’essai gratuite est terminée. Profitez maintenant de l’offre spéciale pour continuer à regarder vos chaînes, films et séries sans limite.</p>
-          <div class="trial-offer-highlight">
+          <div class="trial-offer-highlight" role="button" tabindex="0" data-tv-focusable="true" aria-label="Offre spéciale aujourd’hui">
             <span class="trial-offer-highlight-label">Offre spéciale aujourd’hui</span>
             <span class="trial-offer-discount" aria-hidden="true">-60%</span>
             <div class="trial-offer-highlight-row">
@@ -519,6 +519,9 @@ export function showTrialExpiredModal(messageOverride?: string): void {
   const offerBtn = modalOverlay.querySelector(
     ".trial-offer-button"
   ) as HTMLButtonElement | null;
+  const offerHighlight = modalOverlay.querySelector(
+    ".trial-offer-highlight"
+  ) as HTMLElement | null;
 
   if (!salesEl || !errorEl || !titleEl || !msgEl || !retryBtn || !offerBtn) {
     return;
@@ -589,6 +592,11 @@ export function showTrialExpiredModal(messageOverride?: string): void {
     offerBtn.onclick = (): void => {
       window.location.href = checkoutUrl || "/checkout";
     };
+    if (offerHighlight) {
+      offerHighlight.onclick = (): void => {
+        offerBtn.click();
+      };
+    }
   }
 
   modalOverlay.classList.remove("trial-modal-overlay--hidden");

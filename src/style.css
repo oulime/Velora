@@ -210,6 +210,76 @@ button.primary:hover {
   filter: brightness(1.08);
 }
 
+.velora-tv-focus,
+body.velora-tv-mode :focus-visible {
+  position: relative;
+  outline: 3px solid #ffd166;
+  outline-offset: 2px;
+  border-color: #ffd166 !important;
+  box-shadow:
+    0 0 0 4px rgba(255, 209, 102, 0.25),
+    0 0 24px rgba(255, 209, 102, 0.45) !important;
+  transform: scale(1.03);
+  background: rgba(255, 209, 102, 0.16) !important;
+  z-index: 50;
+}
+
+body.velora-tv-mode .velora-tv-focus {
+  color: #fff;
+}
+
+body.velora-tv-mode .velora-tv-focus .media-info h4,
+body.velora-tv-mode .velora-tv-focus .vel-vod-movie-card__title,
+body.velora-tv-mode .velora-tv-focus .vel-package-card__title {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.72);
+}
+
+body.velora-tv-mode .vod-ctl-seek-track.velora-tv-focus {
+  min-height: 0.65rem;
+}
+
+body.velora-tv-mode .vel-package-card,
+body.velora-tv-mode .vel-vod-movie-card,
+body.velora-tv-mode .media-item,
+body.velora-tv-mode .vel-vod-detail__episode {
+  scroll-margin-top: 7.25rem;
+  scroll-margin-bottom: 2rem;
+}
+
+.velora-tv-select-menu {
+  position: fixed;
+  z-index: 10000;
+  overflow: auto;
+  padding: 0.35rem;
+  border: 1px solid rgba(255, 209, 102, 0.72);
+  border-radius: 12px;
+  background: rgba(10, 8, 18, 0.98);
+  box-shadow:
+    0 0 0 4px rgba(255, 209, 102, 0.16),
+    0 24px 58px rgba(0, 0, 0, 0.58);
+}
+
+.velora-tv-select-option {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.62rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(245, 243, 255, 0.92);
+  text-align: left;
+}
+
+.velora-tv-select-option[aria-selected="true"] {
+  border-color: rgba(255, 209, 102, 0.42);
+  background: rgba(255, 209, 102, 0.12);
+  color: #fff;
+  font-weight: 800;
+}
+
 .status {
   font-size: 0.82rem;
   color: var(--muted);

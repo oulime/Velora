@@ -342,6 +342,8 @@
               class="vel-player-dismiss-x hidden"
               title="Fermer le lecteur"
               aria-label="Fermer le lecteur"
+              tabindex="0"
+              data-tv-focusable="true"
             >
               ×
             </button>
@@ -373,8 +375,8 @@
               </div>
               <div id="live-controls-overlay" class="live-controls-overlay hidden" aria-hidden="true">
                 <div class="live-controls-row">
-                  <button id="live-ctl-play" type="button" class="live-ctl-btn" aria-label="Play"></button>
-                  <button id="live-ctl-mute" type="button" class="live-ctl-btn" aria-label="Mute"></button>
+                  <button id="live-ctl-play" type="button" class="live-ctl-btn" aria-label="Play" tabindex="0" data-tv-focusable="true"></button>
+                  <button id="live-ctl-mute" type="button" class="live-ctl-btn" aria-label="Mute" tabindex="0" data-tv-focusable="true"></button>
                   <span class="live-ctl-status" aria-label="Live stream">
                     <span class="live-ctl-status__dot" aria-hidden="true"></span>
                     LIVE
@@ -384,6 +386,8 @@
                     type="button"
                     class="live-ctl-btn"
                     aria-label="Fullscreen landscape"
+                    tabindex="0"
+                    data-tv-focusable="true"
                   ></button>
                 </div>
               </div>
@@ -405,6 +409,8 @@
               class="vel-player-dismiss-x hidden"
               title="Fermer le lecteur VOD"
               aria-label="Fermer le lecteur VOD"
+              tabindex="0"
+              data-tv-focusable="true"
             >
               ×
             </button>
@@ -436,8 +442,8 @@
               </div>
               <div id="vod-controls-overlay" class="vod-controls-overlay hidden" aria-hidden="true">
                 <div class="vod-controls-row">
-                  <button id="vod-ctl-play" type="button" class="vod-ctl-btn" aria-label="Play"></button>
-                  <button id="vod-ctl-mute" type="button" class="vod-ctl-btn" aria-label="Mute"></button>
+                  <button id="vod-ctl-play" type="button" class="vod-ctl-btn" aria-label="Play" tabindex="0" data-tv-focusable="true"></button>
+                  <button id="vod-ctl-mute" type="button" class="vod-ctl-btn" aria-label="Mute" tabindex="0" data-tv-focusable="true"></button>
                   <span id="vod-ctl-current" class="vod-ctl-time">00:00:00</span>
                   <div
                     id="vod-ctl-seek-track"
@@ -448,12 +454,13 @@
                     aria-valuemax="100"
                     aria-valuenow="0"
                     tabindex="0"
+                    data-tv-focusable="true"
                   >
                     <div id="vod-ctl-seek-fill" class="vod-ctl-seek-fill"></div>
                     <div id="vod-ctl-seek-handle" class="vod-ctl-seek-handle"></div>
                   </div>
                   <span id="vod-ctl-duration" class="vod-ctl-time">00:00:00</span>
-                  <button id="vod-ctl-fullscreen" type="button" class="vod-ctl-btn" aria-label="Fullscreen"></button>
+                  <button id="vod-ctl-fullscreen" type="button" class="vod-ctl-btn" aria-label="Fullscreen" tabindex="0" data-tv-focusable="true"></button>
                 </div>
               </div>
             </div>
