@@ -240,6 +240,11 @@ body.velora-tv-mode .vod-ctl-seek-track.velora-tv-focus {
   min-height: 0.65rem;
 }
 
+body.velora-tv-mode,
+body.velora-tv-mode * {
+  cursor: none !important;
+}
+
 body.velora-tv-mode .vel-package-card,
 body.velora-tv-mode .vel-vod-movie-card,
 body.velora-tv-mode .media-item,

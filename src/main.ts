@@ -373,6 +373,11 @@ let tvNavigationEnabled = false;
 let tvFocusMutationObserver: MutationObserver | null = null;
 let tvSelectMenuEl: HTMLDivElement | null = null;
 let tvFocusRefreshPending = false;
+let tvLastPointerFocusAt = 0;
+let tvLastHandledKeyAction: TvDirection | "enter" | "back" | null = null;
+let tvLastHandledKeyAt = 0;
+let tvLastKeydownAction: TvDirection | "enter" | "back" | null = null;
+let tvLastKeydownAt = 0;
 
 function readTvModeRequested(): boolean {
   try {
@@ -445,6 +450,19 @@ function getTvFocusableElements(): HTMLElement[] {
   const elements = [...scope.querySelectorAll<HTMLElement>(TV_FOCUSABLE_SELECTOR)];
   const unique = [...new Set(elements)];
   return unique.filter((el) => isTvFocusableElement(el) && isWithinTvNavigationWindow(el));
+}
+
+function closestTvFocusableFromPoint(x: number, y: number): HTMLElement | null {
+  const stack = document.elementsFromPoint(x, y);
+  const candidates = getTvFocusableElements();
+  for (const raw of stack) {
+    const el = raw instanceof HTMLElement ? raw : null;
+    const focusable = el?.closest<HTMLElement>(TV_FOCUSABLE_SELECTOR) ?? null;
+    if (focusable && candidates.includes(focusable) && isTvFocusableElement(focusable)) {
+      return focusable;
+    }
+  }
+  return null;
 }
 
 function clearTvFocusClass(): void {
@@ -679,6 +697,79 @@ function handleTvBackAction(): void {
   }
 }
 
+function tvActionFromKeyboardEvent(event: KeyboardEvent): TvDirection | "enter" | "back" | null {
+  const key = event.key;
+  const code = event.code;
+  const keyCode = event.keyCode || event.which;
+  if (key === "ArrowUp" || key === "Up" || code === "ArrowUp" || keyCode === 38) return "up";
+  if (key === "ArrowDown" || key === "Down" || code === "ArrowDown" || keyCode === 40) return "down";
+  if (key === "ArrowLeft" || key === "Left" || code === "ArrowLeft" || keyCode === 37) return "left";
+  if (key === "ArrowRight" || key === "Right" || code === "ArrowRight" || keyCode === 39) return "right";
+  if (key === "Enter" || key === "OK" || key === "Accept" || code === "Enter" || keyCode === 13) return "enter";
+  if (
+    key === "Escape" ||
+    key === "Backspace" ||
+    key === "BrowserBack" ||
+    key === "GoBack" ||
+    code === "Escape" ||
+    code === "Backspace" ||
+    keyCode === 8 ||
+    keyCode === 27 ||
+    keyCode === 461 ||
+    keyCode === 10009
+  ) {
+    return "back";
+  }
+  return null;
+}
+
+function handleTvKeyboardEvent(event: KeyboardEvent): void {
+  if (!tvNavigationEnabled || event.altKey || event.ctrlKey || event.metaKey) return;
+  const action = tvActionFromKeyboardEvent(event);
+  if (!action) return;
+  const now = Date.now();
+  if (event.type === "keyup" && tvLastKeydownAction === action && now - tvLastKeydownAt < 420) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (tvLastHandledKeyAction === action && now - tvLastHandledKeyAt < 90) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+  if (event.type === "keydown") {
+    tvLastKeydownAction = action;
+    tvLastKeydownAt = now;
+  }
+  tvLastHandledKeyAction = action;
+  tvLastHandledKeyAt = now;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  if (action === "enter") {
+    clickCurrentTvFocus();
+    return;
+  }
+  if (action === "back") {
+    handleTvBackAction();
+    return;
+  }
+  moveTvFocus(action);
+}
+
+function handleTvPointerMove(event: PointerEvent | MouseEvent): void {
+  if (!tvNavigationEnabled) return;
+  const now = Date.now();
+  if (now - tvLastPointerFocusAt < 80) return;
+  const focusable = closestTvFocusableFromPoint(event.clientX, event.clientY);
+  if (!focusable) return;
+  tvLastPointerFocusAt = now;
+  setTvFocus(focusable, false);
+}
+
 function syncTvFocusableMetadata(root: ParentNode = document): void {
   for (const el of root.querySelectorAll<HTMLElement>(
     [
@@ -755,33 +846,12 @@ function initTvNavigation(): void {
     true
   );
 
-  document.addEventListener(
-    "keydown",
-    (event) => {
-      if (!tvNavigationEnabled || event.altKey || event.ctrlKey || event.metaKey) return;
-      const key = event.key;
-      if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
-        event.preventDefault();
-        event.stopPropagation();
-        const direction: TvDirection =
-          key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : "right";
-        moveTvFocus(direction);
-        return;
-      }
-      if (key === "Enter" || key === "OK" || key === "Accept") {
-        event.preventDefault();
-        event.stopPropagation();
-        clickCurrentTvFocus();
-        return;
-      }
-      if (key === "Escape" || key === "Backspace" || key === "BrowserBack" || key === "GoBack") {
-        event.preventDefault();
-        event.stopPropagation();
-        handleTvBackAction();
-      }
-    },
-    true
-  );
+  window.addEventListener("keydown", handleTvKeyboardEvent, true);
+  document.addEventListener("keydown", handleTvKeyboardEvent, true);
+  window.addEventListener("keyup", handleTvKeyboardEvent, true);
+  document.addEventListener("keyup", handleTvKeyboardEvent, true);
+  window.addEventListener("mousemove", handleTvPointerMove, true);
+  document.addEventListener("pointermove", handleTvPointerMove, true);
 
   window.addEventListener("storage", (event) => {
     if (event.key !== TV_MODE_STORAGE_KEY) return;
@@ -2609,6 +2679,12 @@ function attachVodPlaybackHelpers(video: HTMLVideoElement): void {
     );
   };
   const onCtlFullscreen = async (): Promise<void> => {
+    const now = Date.now();
+    const lastToggleRaw = elVodCtlFullscreen?.dataset.lastFullscreenToggleAt;
+    const lastToggleAt = lastToggleRaw ? Number(lastToggleRaw) : 0;
+    if (Number.isFinite(lastToggleAt) && now - lastToggleAt < 850) return;
+    if (elVodCtlFullscreen) elVodCtlFullscreen.dataset.lastFullscreenToggleAt = String(now);
+
     const host = elVodPlayerContainer ?? video;
     const inVodFullscreen = Boolean(
       (document.fullscreenElement && elVodPlayerContainer && document.fullscreenElement === elVodPlayerContainer) ||
