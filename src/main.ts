@@ -4773,8 +4773,19 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
   prependVelListingCategoryHeader(tab === "movies" ? "movies" : "series");
   const emptyEmoji = tab === "movies" ? "🎬" : "📺";
   const adminTools = showAdminChannelCurateTools() && uiAdminPackageId != null;
+  const renderKey = `${tab}:${String(uiAdminPackageId ?? "")}:${String(selectedPillId)}`;
+  const visibleLimit = tvNavigationEnabled
+    ? Math.min(
+        streams.length,
+        Math.max(
+          TV_CATALOG_RENDER_PAGE_SIZE,
+          tvCatalogVisibleLimitByKey.get(renderKey) ?? TV_CATALOG_RENDER_PAGE_SIZE
+        )
+      )
+    : streams.length;
+  const visibleStreams = streams.slice(0, visibleLimit);
   let priorityImageSlots = 8;
-  for (const s of streams) {
+  for (const s of visibleStreams) {
     const card = document.createElement("button");
     card.type = "button";
     card.className = "vel-vod-movie-card";
@@ -4884,6 +4895,23 @@ function renderCatalogPosterGrid(streams: LiveStream[], tab: CatalogMediaTab): v
     });
 
     elDynamicList.appendChild(card);
+  }
+
+  if (visibleLimit < streams.length) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "vel-vod-load-more";
+    more.dataset.tvFocusable = "true";
+    more.textContent = `Afficher plus (${visibleLimit}/${streams.length})`;
+    more.addEventListener("click", () => {
+      tvCatalogVisibleLimitByKey.set(
+        renderKey,
+        Math.min(streams.length, visibleLimit + TV_CATALOG_RENDER_PAGE_SIZE)
+      );
+      renderPackageChannelList();
+      refreshTvFocusSoon();
+    });
+    elDynamicList.appendChild(more);
   }
 
   if (streams.length === 0) {

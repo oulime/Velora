@@ -281,6 +281,16 @@ body.velora-tv-mode .vel-vod-detail__episode {
   scroll-margin-bottom: 2rem;
 }
 
+.vel-vod-load-more {
+  min-height: 3.25rem;
+  border: 1px solid rgba(255, 209, 102, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 209, 102, 0.12);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .velora-tv-select-menu {
   position: fixed;
   z-index: 10000;
