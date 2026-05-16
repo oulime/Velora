@@ -341,6 +341,8 @@ let packageGridOrderByKey: Map<string, string[]> = new Map();
 /** Bouquets présents sur la grille uniquement grâce à la liste globale Supabase (popup avant ouverture). */
 let globalAllowlistInjectedPackageIds = new Set<string>();
 let packagesGridRenderToken = 0;
+const TV_CATALOG_RENDER_PAGE_SIZE = 160;
+let tvCatalogVisibleLimitByKey = new Map<string, number>();
 
 function isGlobalAllowlistInjectedPackageId(packageId: string): boolean {
   return globalAllowlistInjectedPackageIds.has(packageId);
@@ -360,6 +362,8 @@ type TvDirection = "up" | "down" | "left" | "right";
 const TV_MODE_STORAGE_KEY = "velora_tv_mode";
 const TV_FOCUS_CLASS = "velora-tv-focus";
 const TV_POINTER_SHIELD_ID = "velora-tv-pointer-shield";
+const TV_HIDDEN_CURSOR_CSS =
+  "url(\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\") 0 0, none";
 const TV_FOCUSABLE_SELECTOR = [
   "button",
   "a[href]",
@@ -434,11 +438,11 @@ function syncTvPointerShield(): void {
   shield.style.setProperty("width", "100vw", "important");
   shield.style.setProperty("height", "100vh", "important");
   shield.style.setProperty("z-index", "2147483646", "important");
-  shield.style.setProperty("cursor", "none", "important");
+  shield.style.setProperty("cursor", TV_HIDDEN_CURSOR_CSS, "important");
   shield.style.setProperty("pointer-events", "auto", "important");
   shield.style.setProperty("touch-action", "none", "important");
-  shield.style.setProperty("background", "transparent", "important");
-  shield.style.setProperty("opacity", "0", "important");
+  shield.style.setProperty("background", "rgba(0, 0, 0, 0.001)", "important");
+  shield.style.setProperty("opacity", "1", "important");
   shield.style.setProperty("display", "block", "important");
   shield.style.setProperty("visibility", "visible", "important");
   if (shield.parentElement !== shieldParent || shield !== shieldParent.lastElementChild) {
@@ -451,13 +455,16 @@ function applyTvCursorSuppression(): void {
   const html = document.documentElement;
   const body = document.body;
   if (tvNavigationEnabled) {
-    html.style.setProperty("cursor", "none", "important");
-    body.style.setProperty("cursor", "none", "important");
+    document.documentElement.classList.add("velora-tv-mode");
+    document.body.classList.add("velora-tv-mode");
+    html.style.setProperty("cursor", TV_HIDDEN_CURSOR_CSS, "important");
+    body.style.setProperty("cursor", TV_HIDDEN_CURSOR_CSS, "important");
     if (document.fullscreenElement instanceof HTMLElement) {
-      document.fullscreenElement.style.setProperty("cursor", "none", "important");
+      document.fullscreenElement.style.setProperty("cursor", TV_HIDDEN_CURSOR_CSS, "important");
     }
-    tvPointerShieldEl?.style.setProperty("cursor", "none", "important");
+    tvPointerShieldEl?.style.setProperty("cursor", TV_HIDDEN_CURSOR_CSS, "important");
     tvPointerShieldEl?.style.setProperty("pointer-events", "auto", "important");
+    syncTvPointerShield();
     return;
   }
   html.style.removeProperty("cursor");
@@ -480,7 +487,7 @@ function syncTvCursorSuppressionLoop(): void {
     }
     syncTvPointerShield();
     applyTvCursorSuppression();
-  }, 250);
+  }, 80);
 }
 
 function syncTvModeState(): void {
@@ -5602,6 +5609,10 @@ function renderPackageChannelList(): void {
 
     syncAdminAddChannelsButton();
   } finally {
+    if (tvNavigationEnabled) {
+      syncTvPointerShield();
+      applyTvCursorSuppression();
+    }
     schedulePersistVeloraUiRoute();
   }
 }

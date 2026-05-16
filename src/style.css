@@ -248,8 +248,14 @@ body.velora-tv-mode .vod-ctl-seek-track.velora-tv-focus {
 }
 
 body.velora-tv-mode,
-html.velora-tv-mode {
-  cursor: none !important;
+html.velora-tv-mode,
+html.velora-tv-mode *,
+html.velora-tv-mode *::before,
+html.velora-tv-mode *::after,
+body.velora-tv-mode *,
+body.velora-tv-mode *::before,
+body.velora-tv-mode *::after {
+  cursor: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==") 0 0, none !important;
 }
 
 #velora-tv-pointer-shield {
@@ -258,11 +264,11 @@ html.velora-tv-mode {
   width: 100vw !important;
   height: 100vh !important;
   z-index: 2147483646 !important;
-  cursor: none !important;
+  cursor: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==") 0 0, none !important;
   pointer-events: auto !important;
   touch-action: none !important;
-  background: transparent !important;
-  opacity: 0 !important;
+  background: rgba(0, 0, 0, 0.001) !important;
+  opacity: 1 !important;
   display: block !important;
   visibility: visible !important;
 }

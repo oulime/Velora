@@ -33,8 +33,9 @@
             }
             shield.style.cssText =
               "position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;" +
-              "z-index:2147483646!important;cursor:none!important;pointer-events:auto!important;" +
-              "touch-action:none!important;background:transparent!important;opacity:0!important;";
+              "z-index:2147483646!important;cursor:url('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==') 0 0,none!important;" +
+              "pointer-events:auto!important;touch-action:none!important;background:rgba(0,0,0,0.001)!important;" +
+              "opacity:1!important;display:block!important;visibility:visible!important;";
           };
           var hideCursor = function () {
             document.documentElement.classList.add("velora-tv-mode");
@@ -54,8 +55,14 @@
     </script>
     <style>
       html.velora-tv-mode,
-      body.velora-tv-mode {
-        cursor: none !important;
+      body.velora-tv-mode,
+      html.velora-tv-mode *,
+      html.velora-tv-mode *::before,
+      html.velora-tv-mode *::after,
+      body.velora-tv-mode *,
+      body.velora-tv-mode *::before,
+      body.velora-tv-mode *::after {
+        cursor: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==") 0 0, none !important;
       }
       #velora-tv-pointer-shield {
         position: fixed !important;
@@ -63,11 +70,13 @@
         width: 100vw !important;
         height: 100vh !important;
         z-index: 2147483646 !important;
-        cursor: none !important;
+        cursor: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==") 0 0, none !important;
         pointer-events: auto !important;
         touch-action: none !important;
-        background: transparent !important;
-        opacity: 0 !important;
+        background: rgba(0, 0, 0, 0.001) !important;
+        opacity: 1 !important;
+        display: block !important;
+        visibility: visible !important;
       }
     </style>
     <link rel="icon" href="/logos/favicon.ico" sizes="any" />
