@@ -1807,22 +1807,25 @@ async function loadXtreamSeriesCatalog(
   }
 
   if (!allSeries.length && seriesCats.length > 0) {
-    for (const cat of seriesCats) {
-      for (const url of seriesUrlsForCategory(cat.category_id)) {
-        try {
-          const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
-          const rawRows = seriesListFromPayload(payload);
-          const chunk = mapChunk(rawRows, cat.category_id);
-          if (chunk.length) {
-            rawSeriesRowsForDebug.push(...rawRows);
-            allSeries.push(...chunk);
-            break;
+    allSeries = await loadCategoryChunksInParallel(
+      seriesCats.map((cat) => String(cat.category_id)),
+      async (categoryId) => {
+        for (const url of seriesUrlsForCategory(categoryId)) {
+          try {
+            const payload = await fetchProxiedJsonWithInit<unknown>(url, { headers });
+            const rawRows = seriesListFromPayload(payload);
+            const chunk = mapChunk(rawRows, categoryId);
+            if (chunk.length) {
+              rawSeriesRowsForDebug.push(...rawRows);
+              return chunk;
+            }
+          } catch {
+            /* variante suivante */
           }
-        } catch {
-          /* variante suivante */
         }
+        return [];
       }
-    }
+    );
   }
 
   if (!allSeries.length) {

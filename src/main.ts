@@ -37,8 +37,10 @@ import {
   type LiveStream,
   tryNodecastLoginAndLoad,
   fetchNodecastLiveStreamsForCategories,
+  fetchNodecastVodCatalog,
   fetchNodecastVodCategories,
   fetchNodecastVodStreamsForCategories,
+  fetchNodecastSeriesCatalog,
   fetchNodecastSeriesCategories,
   fetchNodecastSeriesStreamsForCategories,
   resolveNodecastStreamUrl,
@@ -311,6 +313,7 @@ let seriesAdminConfig: AdminConfig = { ...EMPTY_ADMIN_CONFIG };
 /** Dernier échec de chargement catalogue (affiché si le stockage local est vide après fetch). */
 let nodecastVodCatalogFetchError: string | null = null;
 let nodecastSeriesCatalogFetchError: string | null = null;
+const nodecastMediaCatalogLoadInFlight: Partial<Record<"movies" | "series", Promise<void>>> = {};
 
 type UiTab = "live" | "movies" | "series";
 type UiShell = "packages" | "content";
@@ -8110,6 +8113,39 @@ async function ensureSelectedCountryLiveCatalogReady(): Promise<void> {
 }
 
 /** Charge films ou séries Nodecast si besoin (login initial = maps vides). */
+async function tryLoadNodecastMediaCatalogBulk(tab: "movies" | "series"): Promise<boolean> {
+  if (!state || state.mode !== "nodecast") return false;
+  const sid = state.nodecastXtreamSourceId?.trim();
+  if (!sid) return false;
+
+  try {
+    if (tab === "movies") {
+      const catalog = await fetchNodecastVodCatalog(state.base, sid, state.nodecastAuthHeaders);
+      if (!state) return false;
+      if (!catalog.categories.length && countStreamsInMap(catalog.streamsByCat) === 0) return false;
+      state.vodCategories = catalog.categories;
+      mergeStreamsByCategory(state.vodStreamsByCat, catalog.streamsByCat);
+      for (const categoryId of catalog.streamsByCat.keys()) state.vodLoadedCategoryIds.add(categoryId);
+      state.vodCatalogLoaded = true;
+      return countStreamsInMap(catalog.streamsByCat) > 0;
+    }
+
+    const catalog = await fetchNodecastSeriesCatalog(state.base, sid, state.nodecastAuthHeaders);
+    if (!state) return false;
+    if (!catalog.categories.length && countStreamsInMap(catalog.streamsByCat) === 0) return false;
+    state.seriesCategories = catalog.categories;
+    mergeStreamsByCategory(state.seriesStreamsByCat, catalog.streamsByCat);
+    for (const categoryId of catalog.streamsByCat.keys()) state.seriesLoadedCategoryIds.add(categoryId);
+    state.seriesCatalogLoaded = true;
+    return countStreamsInMap(catalog.streamsByCat) > 0;
+  } catch (err) {
+    if (isVeloraCatalogCacheDebugEnabled()) {
+      console.info("[Velora] Bulk media catalog load fallback", { tab, error: err });
+    }
+    return false;
+  }
+}
+
 async function ensureNodecastVodOrSeriesCatalogReady(
   tab: "movies" | "series",
   opts?: { showLoading?: boolean }
@@ -8118,54 +8154,70 @@ async function ensureNodecastVodOrSeriesCatalogReady(
   const sid = state.nodecastXtreamSourceId?.trim();
   if (!sid) return;
   const showLoading = opts?.showLoading !== false;
+  const loadingLabel = tab === "movies" ? "Chargement des films…" : "Chargement des séries…";
 
-  if (tab === "movies") {
-    if (showLoading) setCatalogLoadingVisible(true, "Chargement des films…", "movies");
-    nodecastVodCatalogFetchError = null;
+  const inFlight = nodecastMediaCatalogLoadInFlight[tab];
+  if (inFlight) {
+    if (showLoading) setCatalogLoadingVisible(true, loadingLabel, tab);
     try {
-      if (!state.vodCatalogLoaded) {
-        state.vodCategories = await fetchNodecastVodCategories(
-          state.base,
-          sid,
-          state.nodecastAuthHeaders
-        );
-        state.vodCatalogLoaded = true;
-      }
-      const wantedCategoryIds = mediaCategoryIdsForSelectedCountry(state.vodCategories);
-      const missingCategoryIds = wantedCategoryIds.filter(
-        (categoryId) => !state?.vodLoadedCategoryIds.has(categoryId)
-      );
-      if (missingCategoryIds.length > 0) {
-        const streamsByCat = await fetchNodecastVodStreamsForCategories(
-          state.base,
-          sid,
-          missingCategoryIds,
-          state.nodecastAuthHeaders
-        );
-        if (!state) return;
-        mergeStreamsByCategory(state.vodStreamsByCat, streamsByCat);
-        for (const categoryId of missingCategoryIds) state.vodLoadedCategoryIds.add(categoryId);
-      }
-      if (!state) return;
-      vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
-      nodecastVodCatalogFetchError = null;
-      logVeloraRawMediaCatalogLayoutDebug("vod", state.vodCategories, state.vodStreamsByCat, vodAdminConfig);
-      persistVeloraNodecastSnapshot();
-    } catch (err) {
-      nodecastVodCatalogFetchError = err instanceof Error ? err.message : String(err);
-      console.error("[Velora] VOD catalogue fetch failed", err);
-      if (state) {
-        state.vodCatalogLoaded = false;
-      }
+      await inFlight;
     } finally {
       if (showLoading) setCatalogLoadingVisible(false);
     }
+    return;
   }
 
-  if (tab === "series") {
-    if (showLoading) setCatalogLoadingVisible(true, "Chargement des séries…", "series");
+  const loadPromise = (async (): Promise<void> => {
+    if (!state || state.mode !== "nodecast") return;
+    if (tab === "movies") {
+      nodecastVodCatalogFetchError = null;
+      try {
+        if (!state.vodCatalogLoaded) {
+          await tryLoadNodecastMediaCatalogBulk("movies");
+        }
+        if (!state.vodCatalogLoaded) {
+          state.vodCategories = await fetchNodecastVodCategories(
+            state.base,
+            sid,
+            state.nodecastAuthHeaders
+          );
+          state.vodCatalogLoaded = true;
+        }
+        const wantedCategoryIds = mediaCategoryIdsForSelectedCountry(state.vodCategories);
+        const missingCategoryIds = wantedCategoryIds.filter(
+          (categoryId) => !state?.vodLoadedCategoryIds.has(categoryId)
+        );
+        if (missingCategoryIds.length > 0) {
+          const streamsByCat = await fetchNodecastVodStreamsForCategories(
+            state.base,
+            sid,
+            missingCategoryIds,
+            state.nodecastAuthHeaders
+          );
+          if (!state) return;
+          mergeStreamsByCategory(state.vodStreamsByCat, streamsByCat);
+          for (const categoryId of missingCategoryIds) state.vodLoadedCategoryIds.add(categoryId);
+        }
+        if (!state) return;
+        vodAdminConfig = buildProviderAdminConfig(state.vodCategories, state.vodStreamsByCat);
+        nodecastVodCatalogFetchError = null;
+        logVeloraRawMediaCatalogLayoutDebug("vod", state.vodCategories, state.vodStreamsByCat, vodAdminConfig);
+        persistVeloraNodecastSnapshot();
+      } catch (err) {
+        nodecastVodCatalogFetchError = err instanceof Error ? err.message : String(err);
+        console.error("[Velora] VOD catalogue fetch failed", err);
+        if (state) {
+          state.vodCatalogLoaded = false;
+        }
+      }
+      return;
+    }
+
     nodecastSeriesCatalogFetchError = null;
     try {
+      if (!state.seriesCatalogLoaded) {
+        await tryLoadNodecastMediaCatalogBulk("series");
+      }
       if (!state.seriesCatalogLoaded) {
         state.seriesCategories = await fetchNodecastSeriesCategories(
           state.base,
@@ -8205,10 +8257,21 @@ async function ensureNodecastVodOrSeriesCatalogReady(
       if (state) {
         state.seriesCatalogLoaded = false;
       }
-    } finally {
-      if (showLoading) setCatalogLoadingVisible(false);
     }
+  })();
+
+  nodecastMediaCatalogLoadInFlight[tab] = loadPromise;
+  if (showLoading) setCatalogLoadingVisible(true, loadingLabel, tab);
+  try {
+    await loadPromise;
+  } finally {
+    if (nodecastMediaCatalogLoadInFlight[tab] === loadPromise) {
+      delete nodecastMediaCatalogLoadInFlight[tab];
+    }
+    if (showLoading) setCatalogLoadingVisible(false);
   }
+  return;
+
 }
 
 async function warmSelectedCountryCatalogs(): Promise<void> {
