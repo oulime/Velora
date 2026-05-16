@@ -248,27 +248,23 @@ body.velora-tv-mode .vod-ctl-seek-track.velora-tv-focus {
 }
 
 body.velora-tv-mode,
-html.velora-tv-mode,
-html.velora-tv-mode *,
-html.velora-tv-mode *::before,
-html.velora-tv-mode *::after,
-body.velora-tv-mode::before,
-body.velora-tv-mode::after,
-body.velora-tv-mode *::before,
-body.velora-tv-mode *::after,
-body.velora-tv-mode * {
+html.velora-tv-mode {
   cursor: none !important;
 }
 
 #velora-tv-pointer-shield {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483646;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483646 !important;
   cursor: none !important;
-  pointer-events: auto;
-  touch-action: none;
-  background: transparent;
-  opacity: 0;
+  pointer-events: auto !important;
+  touch-action: none !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  display: block !important;
+  visibility: visible !important;
 }
 
 body.velora-tv-mode .vel-package-card,

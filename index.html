@@ -19,12 +19,30 @@
           if (tvParam === "1") window.localStorage.setItem("velora_tv_mode", "1");
           document.documentElement.classList.add("velora-tv-mode");
           document.documentElement.style.setProperty("cursor", "none", "important");
+          var ensureShield = function () {
+            if (!document.body) return;
+            var shield = document.getElementById("velora-tv-pointer-shield");
+            if (!shield) {
+              shield = document.createElement("div");
+              shield.id = "velora-tv-pointer-shield";
+              shield.setAttribute("aria-hidden", "true");
+              shield.tabIndex = -1;
+              document.body.appendChild(shield);
+            } else if (shield.parentNode !== document.body || shield !== document.body.lastElementChild) {
+              document.body.appendChild(shield);
+            }
+            shield.style.cssText =
+              "position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;" +
+              "z-index:2147483646!important;cursor:none!important;pointer-events:auto!important;" +
+              "touch-action:none!important;background:transparent!important;opacity:0!important;";
+          };
           var hideCursor = function () {
             document.documentElement.classList.add("velora-tv-mode");
             document.documentElement.style.setProperty("cursor", "none", "important");
             if (document.body) {
               document.body.classList.add("velora-tv-mode");
               document.body.style.setProperty("cursor", "none", "important");
+              ensureShield();
             }
           };
           hideCursor();
@@ -36,14 +54,20 @@
     </script>
     <style>
       html.velora-tv-mode,
-      html.velora-tv-mode *,
-      html.velora-tv-mode *::before,
-      html.velora-tv-mode *::after,
-      body.velora-tv-mode,
-      body.velora-tv-mode *,
-      body.velora-tv-mode *::before,
-      body.velora-tv-mode *::after {
+      body.velora-tv-mode {
         cursor: none !important;
+      }
+      #velora-tv-pointer-shield {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 2147483646 !important;
+        cursor: none !important;
+        pointer-events: auto !important;
+        touch-action: none !important;
+        background: transparent !important;
+        opacity: 0 !important;
       }
     </style>
     <link rel="icon" href="/logos/favicon.ico" sizes="any" />

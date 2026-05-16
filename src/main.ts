@@ -417,21 +417,33 @@ function syncTvPointerShield(): void {
     tvPointerShieldEl = null;
     return;
   }
-  if (tvPointerShieldEl?.isConnected) return;
+  const shieldParent =
+    document.fullscreenElement instanceof HTMLElement ? document.fullscreenElement : document.body;
   const existing = document.getElementById(TV_POINTER_SHIELD_ID);
-  if (existing instanceof HTMLDivElement) {
-    tvPointerShieldEl = existing;
-    tvPointerShieldEl.style.setProperty("cursor", "none", "important");
-    tvPointerShieldEl.style.setProperty("pointer-events", "auto", "important");
-    return;
-  }
-  const shield = document.createElement("div");
+  const shield =
+    tvPointerShieldEl?.isConnected
+      ? tvPointerShieldEl
+      : existing instanceof HTMLDivElement
+        ? existing
+        : document.createElement("div");
   shield.id = TV_POINTER_SHIELD_ID;
   shield.setAttribute("aria-hidden", "true");
   shield.tabIndex = -1;
+  shield.style.setProperty("position", "fixed", "important");
+  shield.style.setProperty("inset", "0", "important");
+  shield.style.setProperty("width", "100vw", "important");
+  shield.style.setProperty("height", "100vh", "important");
+  shield.style.setProperty("z-index", "2147483646", "important");
   shield.style.setProperty("cursor", "none", "important");
   shield.style.setProperty("pointer-events", "auto", "important");
-  document.body.appendChild(shield);
+  shield.style.setProperty("touch-action", "none", "important");
+  shield.style.setProperty("background", "transparent", "important");
+  shield.style.setProperty("opacity", "0", "important");
+  shield.style.setProperty("display", "block", "important");
+  shield.style.setProperty("visibility", "visible", "important");
+  if (shield.parentElement !== shieldParent || shield !== shieldParent.lastElementChild) {
+    shieldParent.appendChild(shield);
+  }
   tvPointerShieldEl = shield;
 }
 
@@ -441,6 +453,9 @@ function applyTvCursorSuppression(): void {
   if (tvNavigationEnabled) {
     html.style.setProperty("cursor", "none", "important");
     body.style.setProperty("cursor", "none", "important");
+    if (document.fullscreenElement instanceof HTMLElement) {
+      document.fullscreenElement.style.setProperty("cursor", "none", "important");
+    }
     tvPointerShieldEl?.style.setProperty("cursor", "none", "important");
     tvPointerShieldEl?.style.setProperty("pointer-events", "auto", "important");
     return;
