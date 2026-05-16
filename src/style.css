@@ -6650,10 +6650,163 @@ body.vel-live-fullscreen-active .main--velora {
   }
 
   .main--velora:has(#packages-view:not(.hidden)):has(#player-container:not(.hidden)) #player-container .video-wrapper,
-  .main--velora:has(#packages-view:not(.hidden)):has(#vod-player-container:not(.hidden))
+.main--velora:has(#packages-view:not(.hidden)):has(#vod-player-container:not(.hidden))
     #vod-player-container
     .video-wrapper {
     max-height: none;
+  }
+
+  /* Desktop series playback: episodes stay visible in the left rail, player stays on the right. */
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    .vel-dashboard {
+    grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    column-gap: 0.85rem;
+    min-height: 100dvh;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    .vel-sidebar {
+    display: none;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    .vel-body {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    padding: 0.75rem 0.75rem 1rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(6, 5, 12, 0.52);
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    .vel-sticky-top {
+    grid-column: 2;
+    grid-row: 1;
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    margin: 0;
+    padding: max(0.35rem, env(safe-area-inset-top, 0px)) max(0.45rem, env(safe-area-inset-right, 0px)) 0.75rem
+      max(0.45rem, env(safe-area-inset-left, 0px));
+    background: transparent;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #content-view.content-view--vod-film-detail,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    > .vel-vod-detail {
+    min-height: 0;
+    height: 100%;
+    background: transparent;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__inner {
+    min-height: 0;
+    height: 100%;
+    padding: 0;
+    background: transparent;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail--series.vel-vod-detail--episode-playing
+    .vel-vod-detail__bg,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail--series.vel-vod-detail--episode-playing
+    .vel-vod-detail__title,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail--series.vel-vod-detail--episode-playing
+    .vel-vod-detail__meta,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail--series.vel-vod-detail--episode-playing
+    .vel-vod-detail__plot,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail--series.vel-vod-detail--episode-playing
+    .vel-vod-detail__section:not(.vel-vod-detail__episodes-section) {
+    display: none !important;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__episodes-section {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__section-title {
+    flex: 0 0 auto;
+    margin-bottom: 0.7rem;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__season-toolbar {
+    flex: 0 0 auto;
+    max-width: none;
+    width: 100%;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__episodes {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 0.15rem 1rem 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__episode,
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing)
+    #dynamic-list.item-list.item-list--vod-film-detail
+    .vel-vod-detail__episode-skeleton {
+    max-width: none;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing):has(
+      #vod-player-container:not(.hidden)
+    )
+    #vod-player-container.player-container--vod {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .main--velora:has(#dynamic-list .vel-vod-detail--series.vel-vod-detail--episode-playing):has(
+      #vod-player-container:not(.hidden)
+    )
+    #vod-player-container.player-container--vod
+    .video-wrapper {
+    width: 100%;
+    max-height: calc(100dvh - 9rem);
   }
 
   /* Admin pays — fenêtre centrée, fond flou */
