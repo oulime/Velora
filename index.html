@@ -7,6 +7,45 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title>VeloraVIP Premium</title>
+    <script>
+      (function () {
+        try {
+          var query = window.location.search || "";
+          var tvMatch = query.match(/[?&]tv=([^&]*)/);
+          var tvParam = tvMatch ? decodeURIComponent(tvMatch[1].replace(/\+/g, " ")) : null;
+          var tvMode =
+            tvParam === "1" || (tvParam !== "0" && window.localStorage.getItem("velora_tv_mode") === "1");
+          if (!tvMode) return;
+          if (tvParam === "1") window.localStorage.setItem("velora_tv_mode", "1");
+          document.documentElement.classList.add("velora-tv-mode");
+          document.documentElement.style.setProperty("cursor", "none", "important");
+          var hideCursor = function () {
+            document.documentElement.classList.add("velora-tv-mode");
+            document.documentElement.style.setProperty("cursor", "none", "important");
+            if (document.body) {
+              document.body.classList.add("velora-tv-mode");
+              document.body.style.setProperty("cursor", "none", "important");
+            }
+          };
+          hideCursor();
+          window.addEventListener("DOMContentLoaded", hideCursor, false);
+        } catch (e) {
+          /* TV cursor bootstrap is best-effort. */
+        }
+      })();
+    </script>
+    <style>
+      html.velora-tv-mode,
+      html.velora-tv-mode *,
+      html.velora-tv-mode *::before,
+      html.velora-tv-mode *::after,
+      body.velora-tv-mode,
+      body.velora-tv-mode *,
+      body.velora-tv-mode *::before,
+      body.velora-tv-mode *::after {
+        cursor: none !important;
+      }
+    </style>
     <link rel="icon" href="/logos/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="/logos/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/logos/favicon-16x16.png" />

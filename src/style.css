@@ -213,14 +213,21 @@ button.primary:hover {
 .velora-tv-focus,
 body.velora-tv-mode :focus-visible {
   position: relative;
-  outline: 3px solid #ffd166;
-  outline-offset: 2px;
+  outline: 4px solid #ffd166;
+  outline-offset: 3px;
   border-color: #ffd166 !important;
   box-shadow:
-    0 0 0 4px rgba(255, 209, 102, 0.25),
-    0 0 24px rgba(255, 209, 102, 0.45) !important;
-  transform: scale(1.03);
-  background: rgba(255, 209, 102, 0.16) !important;
+    0 0 0 5px rgba(255, 209, 102, 0.32),
+    0 0 18px rgba(255, 209, 102, 0.72),
+    0 0 42px rgba(255, 209, 102, 0.5) !important;
+  transform: scale(1.035);
+  background: rgba(255, 209, 102, 0.2) !important;
+  filter: brightness(1.08);
+  transition:
+    transform 90ms ease,
+    box-shadow 90ms ease,
+    background-color 90ms ease,
+    filter 90ms ease;
   z-index: 50;
 }
 

@@ -391,6 +391,7 @@ let tvPointerPressStartedAwayFromFocus = false;
 let tvLastReroutedPointerClickAt = 0;
 let tvSuppressPointerActivationUntil = 0;
 let tvPointerShieldEl: HTMLDivElement | null = null;
+let tvCursorSuppressionTimer: number | null = null;
 
 function readTvModeRequested(): boolean {
   try {
@@ -421,6 +422,7 @@ function syncTvPointerShield(): void {
   if (existing instanceof HTMLDivElement) {
     tvPointerShieldEl = existing;
     tvPointerShieldEl.style.setProperty("cursor", "none", "important");
+    tvPointerShieldEl.style.setProperty("pointer-events", "auto", "important");
     return;
   }
   const shield = document.createElement("div");
@@ -428,6 +430,7 @@ function syncTvPointerShield(): void {
   shield.setAttribute("aria-hidden", "true");
   shield.tabIndex = -1;
   shield.style.setProperty("cursor", "none", "important");
+  shield.style.setProperty("pointer-events", "auto", "important");
   document.body.appendChild(shield);
   tvPointerShieldEl = shield;
 }
@@ -439,10 +442,30 @@ function applyTvCursorSuppression(): void {
     html.style.setProperty("cursor", "none", "important");
     body.style.setProperty("cursor", "none", "important");
     tvPointerShieldEl?.style.setProperty("cursor", "none", "important");
+    tvPointerShieldEl?.style.setProperty("pointer-events", "auto", "important");
     return;
   }
   html.style.removeProperty("cursor");
   body.style.removeProperty("cursor");
+}
+
+function syncTvCursorSuppressionLoop(): void {
+  if (!tvNavigationEnabled) {
+    if (tvCursorSuppressionTimer != null) {
+      window.clearInterval(tvCursorSuppressionTimer);
+      tvCursorSuppressionTimer = null;
+    }
+    return;
+  }
+  if (tvCursorSuppressionTimer != null) return;
+  tvCursorSuppressionTimer = window.setInterval(() => {
+    if (!tvNavigationEnabled) {
+      syncTvCursorSuppressionLoop();
+      return;
+    }
+    syncTvPointerShield();
+    applyTvCursorSuppression();
+  }, 250);
 }
 
 function syncTvModeState(): void {
@@ -450,6 +473,7 @@ function syncTvModeState(): void {
   document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
   syncTvPointerShield();
   applyTvCursorSuppression();
+  syncTvCursorSuppressionLoop();
 }
 
 function markTvFocusable(el: HTMLElement): void {
@@ -1018,6 +1042,9 @@ function initTvNavigation(): void {
   window.addEventListener("keyup", handleTvKeyboardEvent, true);
   document.addEventListener("keyup", handleTvKeyboardEvent, true);
   window.addEventListener("mousemove", handleTvPointerMove, true);
+  window.addEventListener("mouseover", applyTvCursorSuppression, true);
+  window.addEventListener("pointerover", applyTvCursorSuppression, true);
+  window.addEventListener("mouseenter", applyTvCursorSuppression, true);
   window.addEventListener("pointerdown", handleTvPointerPressEvent, true);
   window.addEventListener("mousedown", handleTvPointerPressEvent, true);
   window.addEventListener("touchstart", handleTvPointerPressEvent, true);
@@ -1029,6 +1056,8 @@ function initTvNavigation(): void {
   window.addEventListener("dblclick", handleTvClickEvent, true);
   window.addEventListener("contextmenu", handleTvClickEvent, true);
   document.addEventListener("pointermove", handleTvPointerMove, true);
+  document.addEventListener("mouseover", applyTvCursorSuppression, true);
+  document.addEventListener("pointerover", applyTvCursorSuppression, true);
   document.addEventListener("pointerdown", handleTvPointerPressEvent, true);
   document.addEventListener("mousedown", handleTvPointerPressEvent, true);
   document.addEventListener("touchstart", handleTvPointerPressEvent, true);
