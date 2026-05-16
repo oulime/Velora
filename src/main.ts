@@ -420,20 +420,36 @@ function syncTvPointerShield(): void {
   const existing = document.getElementById(TV_POINTER_SHIELD_ID);
   if (existing instanceof HTMLDivElement) {
     tvPointerShieldEl = existing;
+    tvPointerShieldEl.style.setProperty("cursor", "none", "important");
     return;
   }
   const shield = document.createElement("div");
   shield.id = TV_POINTER_SHIELD_ID;
   shield.setAttribute("aria-hidden", "true");
   shield.tabIndex = -1;
+  shield.style.setProperty("cursor", "none", "important");
   document.body.appendChild(shield);
   tvPointerShieldEl = shield;
+}
+
+function applyTvCursorSuppression(): void {
+  const html = document.documentElement;
+  const body = document.body;
+  if (tvNavigationEnabled) {
+    html.style.setProperty("cursor", "none", "important");
+    body.style.setProperty("cursor", "none", "important");
+    tvPointerShieldEl?.style.setProperty("cursor", "none", "important");
+    return;
+  }
+  html.style.removeProperty("cursor");
+  body.style.removeProperty("cursor");
 }
 
 function syncTvModeState(): void {
   document.documentElement.classList.toggle("velora-tv-mode", tvNavigationEnabled);
   document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
   syncTvPointerShield();
+  applyTvCursorSuppression();
 }
 
 function markTvFocusable(el: HTMLElement): void {
@@ -764,6 +780,7 @@ function tvActionFromKeyboardEvent(event: KeyboardEvent): TvDirection | "enter" 
 
 function handleTvKeyboardEvent(event: KeyboardEvent): void {
   if (!tvNavigationEnabled || event.altKey || event.ctrlKey || event.metaKey) return;
+  applyTvCursorSuppression();
   const action = tvActionFromKeyboardEvent(event);
   if (!action) return;
   const now = Date.now();
@@ -802,6 +819,7 @@ function handleTvKeyboardEvent(event: KeyboardEvent): void {
 
 function handleTvPointerMove(event: PointerEvent | MouseEvent): void {
   if (!tvNavigationEnabled) return;
+  applyTvCursorSuppression();
   const now = Date.now();
   const x = event.clientX;
   const y = event.clientY;
@@ -863,6 +881,7 @@ function stopTvPointerEvent(event: Event): void {
 
 function handleTvPointerPressEvent(event: Event): void {
   if (!tvNavigationEnabled) return;
+  applyTvCursorSuppression();
   const current = getCurrentTvFocus();
   if (!current) return;
   if (Date.now() < tvSuppressPointerActivationUntil) {
@@ -878,6 +897,7 @@ function handleTvPointerPressEvent(event: Event): void {
 
 function handleTvPointerReleaseEvent(event: Event): void {
   if (!tvNavigationEnabled) return;
+  applyTvCursorSuppression();
   const current = getCurrentTvFocus();
   if (!current) return;
   if (Date.now() < tvSuppressPointerActivationUntil) {
@@ -900,6 +920,7 @@ function handleTvPointerReleaseEvent(event: Event): void {
 
 function handleTvClickEvent(event: MouseEvent): void {
   if (!tvNavigationEnabled) return;
+  applyTvCursorSuppression();
   const current = getCurrentTvFocus();
   if (!current) return;
   if (Date.now() < tvSuppressPointerActivationUntil && event.isTrusted) {
