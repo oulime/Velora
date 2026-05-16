@@ -384,6 +384,10 @@ let tvLastKeydownAt = 0;
 let tvPointerNavLastX: number | null = null;
 let tvPointerNavLastY: number | null = null;
 let tvPointerNavLastAt = 0;
+let tvPointerNavAccumX = 0;
+let tvPointerNavAccumY = 0;
+let tvPointerPressStartedAwayFromFocus = false;
+let tvLastReroutedPointerClickAt = 0;
 
 function readTvModeRequested(): boolean {
   try {
@@ -784,15 +788,25 @@ function handleTvPointerMove(event: PointerEvent | MouseEvent): void {
 
   const dx = x - prevX;
   const dy = y - prevY;
-  const absX = Math.abs(dx);
-  const absY = Math.abs(dy);
-  const pointerDirectionThreshold = 16;
-  const pointerDirectionCooldownMs = 230;
+  tvPointerNavAccumX += dx;
+  tvPointerNavAccumY += dy;
+  const absX = Math.abs(tvPointerNavAccumX);
+  const absY = Math.abs(tvPointerNavAccumY);
+  const pointerDirectionThreshold = 4;
+  const pointerDirectionCooldownMs = 115;
   const movedEnough = Math.max(absX, absY) >= pointerDirectionThreshold;
   if (movedEnough && now - tvPointerNavLastAt >= pointerDirectionCooldownMs) {
     const direction: TvDirection =
-      absX >= absY ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up";
+      absX >= absY
+        ? tvPointerNavAccumX > 0
+          ? "right"
+          : "left"
+        : tvPointerNavAccumY > 0
+          ? "down"
+          : "up";
     tvPointerNavLastAt = now;
+    tvPointerNavAccumX = 0;
+    tvPointerNavAccumY = 0;
     moveTvFocus(direction);
     event.preventDefault();
     event.stopPropagation();
@@ -806,15 +820,54 @@ function handleTvPointerMove(event: PointerEvent | MouseEvent): void {
   setTvFocus(focusable, false);
 }
 
+function eventTargetsCurrentTvFocus(event: Event, current: HTMLElement): boolean {
+  const target = event.target instanceof Node ? event.target : null;
+  return Boolean(target && current.contains(target));
+}
+
+function stopTvPointerEvent(event: Event): void {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+}
+
+function handleTvPointerPressEvent(event: Event): void {
+  if (!tvNavigationEnabled) return;
+  const current = getCurrentTvFocus();
+  if (!current) return;
+  const onCurrent = eventTargetsCurrentTvFocus(event, current);
+  tvPointerPressStartedAwayFromFocus = !onCurrent;
+  if (onCurrent) return;
+  stopTvPointerEvent(event);
+}
+
+function handleTvPointerReleaseEvent(event: Event): void {
+  if (!tvNavigationEnabled) return;
+  const current = getCurrentTvFocus();
+  if (!current) return;
+  const onCurrent = eventTargetsCurrentTvFocus(event, current);
+  if (onCurrent && !tvPointerPressStartedAwayFromFocus) return;
+  stopTvPointerEvent(event);
+  if (tvPointerPressStartedAwayFromFocus) {
+    tvPointerPressStartedAwayFromFocus = false;
+    const now = Date.now();
+    if (now - tvLastReroutedPointerClickAt > 260) {
+      tvLastReroutedPointerClickAt = now;
+      clickCurrentTvFocus();
+    }
+  }
+}
+
 function handleTvClickEvent(event: MouseEvent): void {
   if (!tvNavigationEnabled) return;
   const current = getCurrentTvFocus();
   if (!current) return;
-  const target = event.target instanceof Node ? event.target : null;
-  if (target && current.contains(target)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  event.stopImmediatePropagation();
+  if (eventTargetsCurrentTvFocus(event, current) && !tvPointerPressStartedAwayFromFocus) return;
+  stopTvPointerEvent(event);
+  const now = Date.now();
+  if (now - tvLastReroutedPointerClickAt < 260) return;
+  tvLastReroutedPointerClickAt = now;
+  tvPointerPressStartedAwayFromFocus = false;
   clickCurrentTvFocus();
 }
 
@@ -900,6 +953,12 @@ function initTvNavigation(): void {
   document.addEventListener("keyup", handleTvKeyboardEvent, true);
   window.addEventListener("mousemove", handleTvPointerMove, true);
   document.addEventListener("pointermove", handleTvPointerMove, true);
+  document.addEventListener("pointerdown", handleTvPointerPressEvent, true);
+  document.addEventListener("mousedown", handleTvPointerPressEvent, true);
+  document.addEventListener("touchstart", handleTvPointerPressEvent, true);
+  document.addEventListener("pointerup", handleTvPointerReleaseEvent, true);
+  document.addEventListener("mouseup", handleTvPointerReleaseEvent, true);
+  document.addEventListener("touchend", handleTvPointerReleaseEvent, true);
   document.addEventListener("click", handleTvClickEvent, true);
 
   window.addEventListener("storage", (event) => {
