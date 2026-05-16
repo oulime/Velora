@@ -359,6 +359,7 @@ type TvDirection = "up" | "down" | "left" | "right";
 
 const TV_MODE_STORAGE_KEY = "velora_tv_mode";
 const TV_FOCUS_CLASS = "velora-tv-focus";
+const TV_POINTER_SHIELD_ID = "velora-tv-pointer-shield";
 const TV_FOCUSABLE_SELECTOR = [
   "button",
   "a[href]",
@@ -388,6 +389,8 @@ let tvPointerNavAccumX = 0;
 let tvPointerNavAccumY = 0;
 let tvPointerPressStartedAwayFromFocus = false;
 let tvLastReroutedPointerClickAt = 0;
+let tvSuppressPointerActivationUntil = 0;
+let tvPointerShieldEl: HTMLDivElement | null = null;
 
 function readTvModeRequested(): boolean {
   try {
@@ -405,6 +408,32 @@ function readTvModeRequested(): boolean {
   } catch {
     return false;
   }
+}
+
+function syncTvPointerShield(): void {
+  if (!tvNavigationEnabled) {
+    tvPointerShieldEl?.remove();
+    tvPointerShieldEl = null;
+    return;
+  }
+  if (tvPointerShieldEl?.isConnected) return;
+  const existing = document.getElementById(TV_POINTER_SHIELD_ID);
+  if (existing instanceof HTMLDivElement) {
+    tvPointerShieldEl = existing;
+    return;
+  }
+  const shield = document.createElement("div");
+  shield.id = TV_POINTER_SHIELD_ID;
+  shield.setAttribute("aria-hidden", "true");
+  shield.tabIndex = -1;
+  document.body.appendChild(shield);
+  tvPointerShieldEl = shield;
+}
+
+function syncTvModeState(): void {
+  document.documentElement.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+  document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+  syncTvPointerShield();
 }
 
 function markTvFocusable(el: HTMLElement): void {
@@ -760,6 +789,7 @@ function handleTvKeyboardEvent(event: KeyboardEvent): void {
   event.stopPropagation();
   event.stopImmediatePropagation();
   if (action === "enter") {
+    tvSuppressPointerActivationUntil = Date.now() + 1800;
     clickCurrentTvFocus();
     return;
   }
@@ -835,6 +865,11 @@ function handleTvPointerPressEvent(event: Event): void {
   if (!tvNavigationEnabled) return;
   const current = getCurrentTvFocus();
   if (!current) return;
+  if (Date.now() < tvSuppressPointerActivationUntil) {
+    tvPointerPressStartedAwayFromFocus = false;
+    stopTvPointerEvent(event);
+    return;
+  }
   const onCurrent = eventTargetsCurrentTvFocus(event, current);
   tvPointerPressStartedAwayFromFocus = !onCurrent;
   if (onCurrent) return;
@@ -845,6 +880,11 @@ function handleTvPointerReleaseEvent(event: Event): void {
   if (!tvNavigationEnabled) return;
   const current = getCurrentTvFocus();
   if (!current) return;
+  if (Date.now() < tvSuppressPointerActivationUntil) {
+    tvPointerPressStartedAwayFromFocus = false;
+    stopTvPointerEvent(event);
+    return;
+  }
   const onCurrent = eventTargetsCurrentTvFocus(event, current);
   if (onCurrent && !tvPointerPressStartedAwayFromFocus) return;
   stopTvPointerEvent(event);
@@ -862,6 +902,11 @@ function handleTvClickEvent(event: MouseEvent): void {
   if (!tvNavigationEnabled) return;
   const current = getCurrentTvFocus();
   if (!current) return;
+  if (Date.now() < tvSuppressPointerActivationUntil && event.isTrusted) {
+    tvPointerPressStartedAwayFromFocus = false;
+    stopTvPointerEvent(event);
+    return;
+  }
   if (eventTargetsCurrentTvFocus(event, current) && !tvPointerPressStartedAwayFromFocus) return;
   stopTvPointerEvent(event);
   const now = Date.now();
@@ -923,7 +968,7 @@ function refreshTvFocusSoon(): void {
 
 function initTvNavigation(): void {
   tvNavigationEnabled = readTvModeRequested();
-  document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+  syncTvModeState();
   if (!tvNavigationEnabled) return;
 
   syncTvFocusableMetadata();
@@ -952,6 +997,16 @@ function initTvNavigation(): void {
   window.addEventListener("keyup", handleTvKeyboardEvent, true);
   document.addEventListener("keyup", handleTvKeyboardEvent, true);
   window.addEventListener("mousemove", handleTvPointerMove, true);
+  window.addEventListener("pointerdown", handleTvPointerPressEvent, true);
+  window.addEventListener("mousedown", handleTvPointerPressEvent, true);
+  window.addEventListener("touchstart", handleTvPointerPressEvent, true);
+  window.addEventListener("pointerup", handleTvPointerReleaseEvent, true);
+  window.addEventListener("mouseup", handleTvPointerReleaseEvent, true);
+  window.addEventListener("touchend", handleTvPointerReleaseEvent, true);
+  window.addEventListener("click", handleTvClickEvent, true);
+  window.addEventListener("auxclick", handleTvClickEvent, true);
+  window.addEventListener("dblclick", handleTvClickEvent, true);
+  window.addEventListener("contextmenu", handleTvClickEvent, true);
   document.addEventListener("pointermove", handleTvPointerMove, true);
   document.addEventListener("pointerdown", handleTvPointerPressEvent, true);
   document.addEventListener("mousedown", handleTvPointerPressEvent, true);
@@ -960,11 +1015,14 @@ function initTvNavigation(): void {
   document.addEventListener("mouseup", handleTvPointerReleaseEvent, true);
   document.addEventListener("touchend", handleTvPointerReleaseEvent, true);
   document.addEventListener("click", handleTvClickEvent, true);
+  document.addEventListener("auxclick", handleTvClickEvent, true);
+  document.addEventListener("dblclick", handleTvClickEvent, true);
+  document.addEventListener("contextmenu", handleTvClickEvent, true);
 
   window.addEventListener("storage", (event) => {
     if (event.key !== TV_MODE_STORAGE_KEY) return;
     tvNavigationEnabled = readTvModeRequested();
-    document.body.classList.toggle("velora-tv-mode", tvNavigationEnabled);
+    syncTvModeState();
     if (tvNavigationEnabled) refreshTvFocusSoon();
   });
 
